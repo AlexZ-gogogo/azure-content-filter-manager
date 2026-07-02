@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Azure OpenAI 内容筛选器批量管理工具</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://alcdn.msauth.net/browser/2.38.0/js/msal-browser.min.js"></script>
+</head>
+<body>
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <div class="top-bar-left">
+            <button class="menu-toggle" id="menu-toggle"><i class="fas fa-bars"></i></button>
+            <div class="brand">
+                <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%23fff' d='M21.007 8.222A3.738 3.738 0 0015.045 5.2a3.737 3.737 0 00-7.15 1.048 3.737 3.737 0 00-4.634 3.627A3.737 3.737 0 005.25 13.5h14.5a3.738 3.738 0 001.257-5.278z'/%3E%3C/svg%3E" alt="" width="22" height="22">
+                <span>Content Filter Manager</span>
+            </div>
+        </div>
+        <div class="top-bar-center">
+            <div class="global-search">
+                <i class="fas fa-search"></i>
+                <input type="text" id="global-search" placeholder="搜索订阅、资源或筛选器...">
+            </div>
+        </div>
+        <div class="top-bar-right">
+            <button class="top-icon-btn" title="通知" id="btn-notifications"><i class="fas fa-bell"></i></button>
+            <button class="top-icon-btn" title="帮助" id="btn-help"><i class="fas fa-question-circle"></i></button>
+            <div class="user-section hidden" id="user-section">
+                <div class="user-avatar" id="user-avatar"><span id="user-initial">A</span></div>
+                <button class="btn btn-sm btn-ghost" id="btn-logout">退出</button>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btn-login"><i class="fab fa-microsoft"></i> 登录</button>
+        </div>
+    </div>
+
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <nav class="sidebar-nav">
+                <div class="nav-group">
+                    <a class="nav-item active" data-page="overview"><i class="fas fa-tachometer-alt"></i><span>概览</span></a>
+                </div>
+                <div class="nav-group-label">管理</div>
+                <div class="nav-group">
+                    <a class="nav-item" data-page="subscriptions"><i class="fas fa-key"></i><span>订阅管理</span></a>
+                    <a class="nav-item" data-page="resources"><i class="fas fa-cubes"></i><span>资源浏览</span></a>
+                    <a class="nav-item" data-page="filters-view"><i class="fas fa-eye"></i><span>查看筛选器</span></a>
+                </div>
+                <div class="nav-group-label">操作</div>
+                <div class="nav-group">
+                    <a class="nav-item" data-page="batch-create"><i class="fas fa-plus-circle"></i><span>批量创建</span></a>
+                    <a class="nav-item" data-page="batch-apply"><i class="fas fa-link"></i><span>批量应用</span></a>
+                    <a class="nav-item" data-page="batch-delete"><i class="fas fa-trash-alt"></i><span>批量删除</span></a>
+                </div>
+                <div class="nav-group-label">日志</div>
+                <div class="nav-group">
+                    <a class="nav-item" data-page="activity"><i class="fas fa-history"></i><span>操作记录</span></a>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- Main -->
+        <main class="main" id="main">
+            <!-- Login Overlay -->
+            <div class="overlay" id="login-overlay">
+                <div class="login-card">
+                    <div class="login-logo"><i class="fab fa-microsoft"></i></div>
+                    <h2>Azure 内容筛选器批量管理</h2>
+                    <p>批量创建、应用和管理 Azure OpenAI / Foundry 资源的内容筛选器策略</p>
+                    <ul class="login-features">
+                        <li><i class="fas fa-check"></i> 多订阅批量操作</li>
+                        <li><i class="fas fa-check"></i> 自定义筛选级别 / 仅批注 / 完全关闭</li>
+                        <li><i class="fas fa-check"></i> 一键应用到所有模型部署</li>
+                        <li><i class="fas fa-check"></i> 查看和删除现有筛选器</li>
+                    </ul>
+                    <button class="btn btn-primary btn-lg" id="btn-login-main"><i class="fab fa-microsoft"></i> 使用 Microsoft 账号登录</button>
+                </div>
+            </div>
+
+            <!-- Page: Overview -->
+            <div class="page active" id="page-overview">
+                <div class="page-title"><h1>概览</h1><span class="page-subtitle">仪表板</span></div>
+                <div class="stats-row">
+                    <div class="stat-card"><div class="stat-icon blue"><i class="fas fa-key"></i></div><div class="stat-body"><div class="stat-val" id="stat-subs">0</div><div class="stat-lbl">已选订阅</div></div></div>
+                    <div class="stat-card"><div class="stat-icon purple"><i class="fas fa-cubes"></i></div><div class="stat-body"><div class="stat-val" id="stat-resources">0</div><div class="stat-lbl">OpenAI 资源</div></div></div>
+                    <div class="stat-card"><div class="stat-icon green"><i class="fas fa-robot"></i></div><div class="stat-body"><div class="stat-val" id="stat-deployments">0</div><div class="stat-lbl">模型部署</div></div></div>
+                    <div class="stat-card"><div class="stat-icon orange"><i class="fas fa-shield-alt"></i></div><div class="stat-body"><div class="stat-val" id="stat-filters">0</div><div class="stat-lbl">自定义筛选器</div></div></div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-bolt"></i> 快速操作</h3></div>
+                    <div class="card-body">
+                        <div class="quick-grid">
+                            <div class="quick-card" data-goto="batch-create"><i class="fas fa-plus-circle"></i><strong>批量创建筛选器</strong><small>创建自定义内容筛选器</small></div>
+                            <div class="quick-card" data-goto="batch-apply"><i class="fas fa-link"></i><strong>批量应用</strong><small>应用到模型部署</small></div>
+                            <div class="quick-card" data-goto="resources"><i class="fas fa-cubes"></i><strong>浏览资源</strong><small>查看资源和筛选器状态</small></div>
+                            <div class="quick-card" data-goto="batch-delete"><i class="fas fa-eraser"></i><strong>批量删除</strong><small>删除自定义筛选器</small></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: Subscriptions -->
+            <div class="page" id="page-subscriptions">
+                <div class="page-title"><h1>订阅管理</h1><span class="page-subtitle">选择要管理的 Azure 订阅</span></div>
+                <div class="toolbar">
+                    <button class="btn btn-sm btn-outline" id="btn-refresh-subs"><i class="fas fa-sync-alt"></i> 刷新</button>
+                    <button class="btn btn-sm btn-outline" id="btn-select-all-subs"><i class="fas fa-check-double"></i> 全选</button>
+                    <button class="btn btn-sm btn-outline" id="btn-deselect-all-subs"><i class="fas fa-minus-circle"></i> 取消全选</button>
+                    <div class="toolbar-spacer"></div>
+                    <div class="search-box"><i class="fas fa-search"></i><input type="text" id="sub-search" placeholder="搜索订阅..."></div>
+                </div>
+                <div class="card">
+                    <div class="card-body no-pad">
+                        <div class="loading hidden" id="subs-loading"><div class="spinner"></div><span>加载订阅中...</span></div>
+                        <table class="data-table" id="subs-table">
+                            <thead><tr><th class="w40"><input type="checkbox" id="subs-check-all"></th><th>订阅名称</th><th>订阅 ID</th><th>状态</th></tr></thead>
+                            <tbody id="subs-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: Resources -->
+            <div class="page" id="page-resources">
+                <div class="page-title"><h1>资源浏览</h1><span class="page-subtitle">Azure OpenAI / AI Services 资源列表</span></div>
+                <div class="toolbar">
+                    <button class="btn btn-sm btn-primary" id="btn-load-resources"><i class="fas fa-download"></i> 加载资源</button>
+                    <button class="btn btn-sm btn-outline" id="btn-sel-all-res"><i class="fas fa-check-double"></i> 全选</button>
+                    <button class="btn btn-sm btn-outline" id="btn-desel-all-res"><i class="fas fa-minus-circle"></i> 取消</button>
+                    <div class="toolbar-spacer"></div>
+                    <div class="search-box"><i class="fas fa-search"></i><input type="text" id="res-search" placeholder="搜索资源..."></div>
+                    <select class="toolbar-select" id="res-type-filter"><option value="">所有类型</option><option value="OpenAI">OpenAI</option><option value="AIServices">AI Services</option></select>
+                </div>
+                <div class="card">
+                    <div class="card-body no-pad">
+                        <div class="loading hidden" id="res-loading"><div class="spinner"></div><span>加载资源中...</span></div>
+                        <table class="data-table" id="res-table">
+                            <thead><tr><th class="w40"><input type="checkbox" id="res-check-all"></th><th>资源名称</th><th>类型</th><th>资源组</th><th>区域</th><th>订阅</th></tr></thead>
+                            <tbody id="res-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: View Filters -->
+            <div class="page" id="page-filters-view">
+                <div class="page-title"><h1>查看筛选器</h1><span class="page-subtitle">查看已勾选资源的现有内容筛选器策略</span></div>
+                <div class="toolbar">
+                    <button class="btn btn-sm btn-primary" id="btn-load-filters"><i class="fas fa-eye"></i> 加载筛选器</button>
+                    <div class="toolbar-spacer"></div>
+                    <label class="checkbox-label"><input type="checkbox" id="filters-show-system" checked> 显示系统筛选器</label>
+                </div>
+                <div class="card">
+                    <div class="card-body">
+                        <div class="loading hidden" id="filters-loading"><div class="spinner"></div><span>加载筛选器中...</span></div>
+                        <div id="filters-view-content"><p class="empty-hint"><i class="fas fa-info-circle"></i> 请先在“订阅管理”中选择订阅，在“资源浏览”中加载并勾选资源，然后点击“加载筛选器”</p></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: Batch Create -->
+            <div class="page" id="page-batch-create">
+                <div class="page-title"><h1>批量创建筛选器</h1><span class="page-subtitle">为多个资源创建自定义内容筛选器并应用到模型</span></div>
+                
+                <div class="wizard-steps">
+                    <div class="wstep active" data-step="1"><span class="wnum">1</span> 基本信息</div>
+                    <div class="wstep" data-step="2"><span class="wnum">2</span> 输入筛选器</div>
+                    <div class="wstep" data-step="3"><span class="wnum">3</span> 输出筛选器</div>
+                    <div class="wstep" data-step="4"><span class="wnum">4</span> 其他筛选器</div>
+                    <div class="wstep" data-step="5"><span class="wnum">5</span> 确认执行</div>
+                </div>
+
+                <!-- Wizard Step 1 -->
+                <div class="wiz-page active" id="wiz-1">
+                    <div class="card"><div class="card-header"><h3>基本信息</h3></div><div class="card-body">
+                        <div class="form-row">
+                            <div class="form-group"><label>筛选器名称 <span class="req">*</span></label><input type="text" id="filter-name" class="form-input" value="custom-filter-open" placeholder="输入筛选器名称"></div>
+                            <div class="form-group"><label>筛选模式</label><select id="filter-mode" class="form-input"><option value="Asynchronous_filter">异步筛选 (推荐)</option><option value="Blocking">阻止模式</option><option value="Default">默认模式</option></select></div>
+                        </div>
+                        <div class="form-group"><label>快速预设</label>
+                            <div class="preset-row">
+                                <button class="preset-btn green" data-preset="low"><i class="fas fa-shield-alt"></i> Lowest blocking</button>
+                                <button class="preset-btn" data-preset="medium"><i class="fas fa-shield-alt"></i> Medium blocking</button>
+                                <button class="preset-btn red" data-preset="high"><i class="fas fa-shield-alt"></i> Highest blocking</button>
+                                <button class="preset-btn orange" data-preset="annotate"><i class="fas fa-eye"></i> Annotate only *</button>
+                                <button class="preset-btn dark" data-preset="off"><i class="fas fa-ban"></i> Off (关闭) *</button>
+                            </div>
+                            <p class="hint-text"><i class="fas fa-exclamation-triangle"></i> 带 * 选项需要订阅已获得 <a href="https://ncv.microsoft.com/uEfCgnITdR" target="_blank">Modified Content Filters</a> 审批</p>
+                        </div>
+
+                        <!-- Fallback Config -->
+                        <div class="form-group hidden" id="fallback-section">
+                            <div class="fallback-card">
+                                <div class="fallback-header"><i class="fas fa-random"></i> <strong>权限不足自动降级策略</strong></div>
+                                <p class="fallback-desc">部分订阅可能未获得关闭/仅批注的审批权限。当创建失败时，系统将自动使用以下备选配置重试：</p>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label>降级操作模式</label>
+                                        <select id="fallback-action" class="form-input">
+                                            <option value="annotate_and_block_high">Lowest blocking（最宽松）</option>
+                                            <option value="annotate_and_block_medium">Medium blocking（中等）</option>
+                                            <option value="annotate_and_block_low">Highest blocking（最严格）</option>
+                                            <option value="skip">跳过（不创建筛选器）</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>降级后筛选器名称</label>
+                                        <input type="text" id="fallback-filter-name" class="form-input" value="" placeholder="留空则使用原名称">
+                                        <small class="hint-text">可单独命名，便于区分哪些资源用了降级配置</small>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="fallback-enabled" checked>
+                                        <span>启用自动降级（关闭则权限不足时直接报错跳过）</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div></div>
+                </div>
+
+                <!-- Wizard Step 2 -->
+                <div class="wiz-page" id="wiz-2">
+                    <div class="card"><div class="card-header"><h3>输入筛选器 (Prompt)</h3><small>对用户输入的提示内容进行筛选</small></div><div class="card-body no-pad">
+                        <table class="data-table filter-cfg-table"><thead><tr><th>类别</th><th>媒体</th><th>操作</th><th>阻止阈值</th></tr></thead>
+                        <tbody id="input-filters-body"></tbody></table>
+                    </div></div>
+                </div>
+
+                <!-- Wizard Step 3 -->
+                <div class="wiz-page" id="wiz-3">
+                    <div class="card"><div class="card-header"><h3>输出筛选器 (Completion)</h3><small>对模型输出的回复进行筛选</small></div><div class="card-body no-pad">
+                        <table class="data-table filter-cfg-table"><thead><tr><th>类别</th><th>媒体</th><th>操作</th><th>阻止阈值</th></tr></thead>
+                        <tbody id="output-filters-body"></tbody></table>
+                    </div></div>
+                </div>
+
+                <!-- Wizard Step 4 -->
+                <div class="wiz-page" id="wiz-4">
+                    <div class="card"><div class="card-header"><h3>其他筛选器</h3><small>越狱防护、受保护材料等</small></div><div class="card-body no-pad">
+                        <table class="data-table filter-cfg-table"><thead><tr><th>类别</th><th>来源</th><th>操作</th></tr></thead>
+                        <tbody id="other-filters-body"></tbody></table>
+                    </div></div>
+                </div>
+
+                <!-- Wizard Step 5 -->
+                <div class="wiz-page" id="wiz-5">
+                    <div class="card"><div class="card-header"><h3>确认并执行</h3></div><div class="card-body">
+                        <div id="wiz-summary"></div>
+                        <div class="form-group"><label class="checkbox-label"><input type="checkbox" id="apply-to-models" checked> 创建后自动应用到所有模型部署</label></div>
+                        <div class="progress-section hidden" id="exec-progress-section">
+                            <div class="progress-bar"><div class="progress-fill" id="exec-progress"></div></div>
+                            <div class="progress-text" id="exec-progress-text">0%</div>
+                            <div class="log-box" id="exec-log"></div>
+                        </div>
+                    </div></div>
+                </div>
+
+                <!-- Wizard Nav -->
+                <div class="wiz-nav">
+                    <button class="btn btn-outline" id="wiz-prev" disabled><i class="fas fa-chevron-left"></i> 上一步</button>
+                    <button class="btn btn-primary" id="wiz-next">下一步 <i class="fas fa-chevron-right"></i></button>
+                    <button class="btn btn-success hidden" id="wiz-exec"><i class="fas fa-rocket"></i> 开始执行</button>
+                </div>
+            </div>
+
+            <!-- Page: Batch Apply -->
+            <div class="page" id="page-batch-apply">
+                <div class="page-title"><h1>批量应用筛选器</h1><span class="page-subtitle">将现有筛选器应用到模型部署</span></div>
+                <!-- Step 1: Load & Select Filter -->
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-shield-alt"></i> 第 1 步：选择筛选器</h3>
+                        <button class="btn btn-sm btn-primary" id="btn-apply-load-filters"><i class="fas fa-sync-alt"></i> 加载已选资源的筛选器</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="loading hidden" id="apply-filters-loading"><div class="spinner"></div><span>加载中...</span></div>
+                        <div id="apply-filters-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 请先在“资源浏览”中加载并勾选资源，然后点击上方按钮加载筛选器</p></div>
+                    </div>
+                </div>
+                <!-- Step 2: Select Models -->
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-robot"></i> 第 2 步：选择模型部署</h3>
+                        <button class="btn btn-sm btn-primary" id="btn-apply-load-models"><i class="fas fa-download"></i> 加载模型部署</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="loading hidden" id="apply-models-loading"><div class="spinner"></div><span>加载中...</span></div>
+                        <div id="apply-models-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 点击上方按钮加载已选资源的模型部署</p></div>
+                    </div>
+                </div>
+                <!-- Step 3: Execute -->
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-play"></i> 第 3 步：执行</h3></div>
+                    <div class="card-body">
+                        <div id="apply-summary" class="empty-hint"><i class="fas fa-info-circle"></i> 请先选择筛选器和模型部署</div>
+                        <button class="btn btn-primary" id="btn-apply-exec" disabled><i class="fas fa-rocket"></i> 执行批量应用</button>
+                        <div class="progress-section hidden" id="apply-progress-section">
+                            <div class="progress-bar"><div class="progress-fill" id="apply-progress"></div></div>
+                            <div class="progress-text" id="apply-progress-text">0%</div>
+                            <div class="log-box" id="apply-log"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: Batch Delete -->
+            <div class="page" id="page-batch-delete">
+                <div class="page-title"><h1>批量删除筛选器</h1><span class="page-subtitle">从多个资源中删除自定义筛选器</span></div>
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-shield-alt"></i> 选择要删除的筛选器</h3>
+                        <button class="btn btn-sm btn-primary" id="btn-delete-load-filters"><i class="fas fa-sync-alt"></i> 加载筛选器</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="loading hidden" id="delete-filters-loading"><div class="spinner"></div><span>加载中...</span></div>
+                        <div id="delete-filters-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 点击上方按钮加载已选资源的自定义筛选器</p></div>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header"><h3><i class="fas fa-trash"></i> 执行删除</h3></div>
+                    <div class="card-body">
+                        <button class="btn btn-danger" id="btn-delete-exec" disabled><i class="fas fa-trash"></i> 删除已勾选的筛选器</button>
+                        <div class="progress-section hidden" id="delete-progress-section">
+                            <div class="progress-bar"><div class="progress-fill" id="delete-progress"></div></div>
+                            <div class="log-box" id="delete-log"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Page: Activity -->
+            <div class="page" id="page-activity">
+                <div class="page-title"><h1>操作记录</h1><span class="page-subtitle">历史操作日志</span></div>
+                <div class="card"><div class="card-header"><h3>日志</h3><button class="btn btn-sm btn-ghost" id="btn-clear-activity"><i class="fas fa-eraser"></i> 清除</button></div><div class="card-body">
+                    <div class="log-box" id="activity-log"><p class="empty-hint">暂无操作记录</p></div>
+                </div></div>
+            </div>
+        </main>
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="azure-api.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
