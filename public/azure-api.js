@@ -23,22 +23,29 @@ async function azureRequest(url, method = 'GET', body = null) {
     return response.json();
 }
 
+// GET all pages of a paginated ARM list, following nextLink
+async function azureRequestAll(url) {
+    const items = [];
+    let next = url;
+    while (next) {
+        const result = await azureRequest(next);
+        if (result.value) items.push(...result.value);
+        next = result.nextLink || null;
+    }
+    return items;
+}
+
 // List all subscriptions
 async function listSubscriptions() {
     const url = `${ARM_BASE}/subscriptions?api-version=2022-12-01`;
-    const result = await azureRequest(url);
-    return result.value || [];
+    return await azureRequestAll(url);
 }
 
 // List Cognitive Services accounts (OpenAI) in a subscription
 async function listCognitiveServicesAccounts(subscriptionId) {
     const url = `${ARM_BASE}/subscriptions/${subscriptionId}/providers/Microsoft.CognitiveServices/accounts?api-version=${API_VERSION}`;
-    const result = await azureRequest(url);
-    return (result.value || []).filter(account => 
-        account.kind === 'OpenAI' || 
-        account.kind === 'AIServices' ||
-        account.kind === 'CognitiveServices'
-    );
+    // Return all accounts (all kinds, following pagination) so Foundry/OpenAI/AIServices etc. are all included
+    return await azureRequestAll(url);
 }
 
 // List deployments for a Cognitive Services account
