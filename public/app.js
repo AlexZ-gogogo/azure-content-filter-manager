@@ -5,6 +5,8 @@ let selectedResources = new Set();
 let currentWizStep = 1;
 const MAX_WIZ_STEPS = 5;
 let activityLog = [];
+let subscriptionMap = {};
+let resSortState = { key: null, dir: 1 };
 
 document.addEventListener('DOMContentLoaded', () => {
     initMsal();
@@ -48,6 +50,9 @@ function setupEventListeners() {
     document.getElementById('res-check-all').addEventListener('change', (e) => toggleAllRes(e.target.checked));
     document.getElementById('res-search').addEventListener('input', filterResourcesList);
     document.getElementById('res-type-filter').addEventListener('change', filterResourcesList);
+    document.querySelectorAll('#res-table thead th.sortable').forEach(th => {
+        th.addEventListener('click', () => sortResources(th.dataset.sort));
+    });
     
     // Filters View
     document.getElementById('btn-load-filters').addEventListener('click', loadExistingFilters);
@@ -136,6 +141,7 @@ async function loadSubscriptions() {
         const subs = await listSubscriptions();
         loading.classList.add('hidden');
         subs.forEach(sub => {
+            subscriptionMap[sub.subscriptionId] = sub.displayName;
             const tr = document.createElement('tr');
             tr.dataset.id = sub.subscriptionId;
             tr.innerHTML = `
@@ -194,13 +200,66 @@ async function loadResources() {
             const resources = await listCognitiveServicesAccounts(subId);
             resources.forEach(r => { r._subId = subId; allResources.push(r); });
         }
+        // Assign stable index used for selection identity; select all by default
+        selectedResources.clear();
+        allResources.forEach((r, i) => { r._idx = i; selectedResources.add(i); });
+        resSortState = { key: null, dir: 1 };
         loading.classList.add('hidden');
         renderResources(allResources);
+        updateResSummary();
+        updateSortIcons();
         updateStats();
     } catch (err) {
         loading.classList.add('hidden');
         tbody.innerHTML = `<tr><td colspan="6" style="color:var(--danger);padding:16px;">加载失败: ${err.message}</td></tr>`;
     }
+}
+
+// Get sortable value for a resource by column key
+function resSortValue(r, key) {
+    const p = parseResourceId(r.id);
+    switch (key) {
+        case 'name': return (r.name || '').toLowerCase();
+        case 'kind': return (r.kind || '').toLowerCase();
+        case 'resourceGroup': return (p.resourceGroup || '').toLowerCase();
+        case 'location': return (r.location || '').toLowerCase();
+        case 'subscription': return (subscriptionMap[r._subId] || r._subId || '').toLowerCase();
+        default: return '';
+    }
+}
+
+function sortResources(key) {
+    if (!key) return;
+    if (resSortState.key === key) resSortState.dir *= -1;
+    else { resSortState.key = key; resSortState.dir = 1; }
+    const sorted = [...allResources].sort((a, b) => {
+        const va = resSortValue(a, key), vb = resSortValue(b, key);
+        if (va < vb) return -1 * resSortState.dir;
+        if (va > vb) return 1 * resSortState.dir;
+        return 0;
+    });
+    renderResources(sorted);
+    updateSortIcons();
+    filterResourcesList();
+}
+
+function updateSortIcons() {
+    document.querySelectorAll('#res-table thead th.sortable').forEach(th => {
+        const icon = th.querySelector('.sort-icon');
+        const active = th.dataset.sort === resSortState.key;
+        th.classList.toggle('sorted', active);
+        if (!icon) return;
+        if (active) icon.className = 'fas sort-icon ' + (resSortState.dir === 1 ? 'fa-sort-up' : 'fa-sort-down');
+        else icon.className = 'fas fa-sort sort-icon';
+    });
+}
+
+function updateResSummary() {
+    const el = document.getElementById('res-summary');
+    if (!el) return;
+    const subCount = new Set(allResources.map(r => r._subId)).size;
+    el.innerHTML = `正在显示 <strong>${allResources.length}</strong> 个资源 · 来自 <strong>${subCount}</strong> 个订阅`;
+    el.classList.toggle('hidden', allResources.length === 0);
 }
 
 function renderResources(resources) {
@@ -210,20 +269,22 @@ function renderResources(resources) {
         tbody.innerHTML = '<tr><td colspan="6" class="empty-hint">未找到 OpenAI/AI Services 资源</td></tr>';
         return;
     }
-    resources.forEach((r, i) => {
+    resources.forEach((r) => {
+        const i = r._idx;
         const p = parseResourceId(r.id);
+        const subName = subscriptionMap[r._subId] || `${r._subId.substring(0, 8)}...`;
+        const isChecked = selectedResources.has(i);
         const tr = document.createElement('tr');
         tr.dataset.index = i;
         tr.innerHTML = `
-            <td class="w40"><input type="checkbox" class="res-cb" data-index="${i}" ${selectedResources.has(i) ? 'checked' : 'checked'}></td>
+            <td class="w40"><input type="checkbox" class="res-cb" data-index="${i}" ${isChecked ? 'checked' : ''}></td>
             <td><strong>${r.name}</strong></td>
             <td><span class="media-tag">${r.kind || '-'}</span></td>
             <td>${p.resourceGroup}</td>
             <td>${r.location}</td>
-            <td style="font-size:12px;color:var(--text-muted)">${r._subId.substring(0,8)}...</td>
+            <td>${subName}</td>
         `;
         const cb = tr.querySelector('.res-cb');
-        if (cb.checked) selectedResources.add(i);
         cb.addEventListener('change', (e) => {
             if (e.target.checked) selectedResources.add(i);
             else selectedResources.delete(i);

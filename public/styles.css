@@ -111,6 +111,12 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .data-table tr:hover td { background: #f8f9fa; }
 .data-table .w40 { width: 40px; text-align: center; }
 .data-table input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--azure-blue); cursor: pointer; }
+.data-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.data-table th.sortable:hover { background: #f0f0f0; color: var(--text); }
+.sort-icon { margin-left: 4px; font-size: 10px; opacity: 0.45; }
+.data-table th.sortable.sorted .sort-icon { opacity: 1; color: var(--azure-blue); }
+.table-summary { padding: 8px 16px; font-size: 13px; color: var(--text-secondary); border-bottom: 1px solid var(--border); background: #fafbfc; }
+.table-summary strong { color: var(--text); font-weight: 600; }
 
 /* Filter config table */
 .filter-cfg-table td { vertical-align: middle; }

@@ -136,8 +136,16 @@
                 <div class="card">
                     <div class="card-body no-pad">
                         <div class="loading hidden" id="res-loading"><div class="spinner"></div><span>加载资源中...</span></div>
+                        <div class="table-summary hidden" id="res-summary"></div>
                         <table class="data-table" id="res-table">
-                            <thead><tr><th class="w40"><input type="checkbox" id="res-check-all"></th><th>资源名称</th><th>类型</th><th>资源组</th><th>区域</th><th>订阅</th></tr></thead>
+                            <thead><tr>
+                                <th class="w40"><input type="checkbox" id="res-check-all"></th>
+                                <th class="sortable" data-sort="name">资源名称 <i class="fas fa-sort sort-icon"></i></th>
+                                <th class="sortable" data-sort="kind">类型 <i class="fas fa-sort sort-icon"></i></th>
+                                <th class="sortable" data-sort="resourceGroup">资源组 <i class="fas fa-sort sort-icon"></i></th>
+                                <th class="sortable" data-sort="location">区域 <i class="fas fa-sort sort-icon"></i></th>
+                                <th class="sortable" data-sort="subscription">订阅 <i class="fas fa-sort sort-icon"></i></th>
+                            </tr></thead>
                             <tbody id="res-tbody"></tbody>
                         </table>
                     </div>
