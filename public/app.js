@@ -7,6 +7,8 @@ const MAX_WIZ_STEPS = 5;
 let activityLog = [];
 let subscriptionMap = {};
 let resSortState = { key: null, dir: 1 };
+let allSubscriptions = [];
+let subSortState = { key: null, dir: 1 };
 
 document.addEventListener('DOMContentLoaded', () => {
     initMsal();
@@ -42,6 +44,9 @@ function setupEventListeners() {
     document.getElementById('btn-deselect-all-subs').addEventListener('click', () => toggleAllSubs(false));
     document.getElementById('subs-check-all').addEventListener('change', (e) => toggleAllSubs(e.target.checked));
     document.getElementById('sub-search').addEventListener('input', filterSubsList);
+    document.querySelectorAll('#subs-table thead th.sortable').forEach(th => {
+        th.addEventListener('click', () => sortSubscriptions(th.dataset.sort));
+    });
     
     // Resources
     document.getElementById('btn-load-resources').addEventListener('click', loadResources);
@@ -138,10 +143,31 @@ async function loadSubscriptions() {
     tbody.innerHTML = '';
     
     try {
-        const subs = await listSubscriptions();
+        allSubscriptions = await listSubscriptions();
         loading.classList.add('hidden');
-        subs.forEach(sub => {
+        allSubscriptions.forEach(sub => {
             subscriptionMap[sub.subscriptionId] = sub.displayName;
+        });
+        subSortState = { key: null, dir: 1 };
+        renderSubscriptions(allSubscriptions);
+        updateSubSummary();
+        updateSubSortIcons();
+        updateStats();
+    } catch (err) {
+        loading.classList.add('hidden');
+        tbody.innerHTML = `<tr><td colspan="4" style="color:var(--danger);padding:16px;">加载失败: ${err.message}</td></tr>`;
+        document.getElementById('subs-summary').classList.add('hidden');
+    }
+}
+
+function renderSubscriptions(subscriptions) {
+    const tbody = document.getElementById('subs-tbody');
+    tbody.innerHTML = '';
+    if (subscriptions.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-hint">未找到订阅</td></tr>';
+        return;
+    }
+    subscriptions.forEach(sub => {
             const tr = document.createElement('tr');
             tr.dataset.id = sub.subscriptionId;
             tr.innerHTML = `
@@ -153,15 +179,54 @@ async function loadSubscriptions() {
             tr.querySelector('.sub-cb').addEventListener('change', (e) => {
                 if (e.target.checked) selectedSubscriptions.add(sub.subscriptionId);
                 else selectedSubscriptions.delete(sub.subscriptionId);
+                updateSubSummary();
                 updateStats();
             });
             tbody.appendChild(tr);
-        });
-        updateStats();
-    } catch (err) {
-        loading.classList.add('hidden');
-        tbody.innerHTML = `<tr><td colspan="4" style="color:var(--danger);padding:16px;">加载失败: ${err.message}</td></tr>`;
+    });
+}
+
+function subSortValue(sub, key) {
+    switch (key) {
+        case 'name': return (sub.displayName || '').toLowerCase();
+        case 'id': return (sub.subscriptionId || '').toLowerCase();
+        case 'state': return (sub.state || 'Enabled').toLowerCase();
+        default: return '';
     }
+}
+
+function sortSubscriptions(key) {
+    if (!key) return;
+    if (subSortState.key === key) subSortState.dir *= -1;
+    else subSortState = { key, dir: 1 };
+    const sorted = [...allSubscriptions].sort((a, b) => {
+        const valueA = subSortValue(a, key);
+        const valueB = subSortValue(b, key);
+        if (valueA < valueB) return -1 * subSortState.dir;
+        if (valueA > valueB) return 1 * subSortState.dir;
+        return 0;
+    });
+    renderSubscriptions(sorted);
+    updateSubSortIcons();
+    filterSubsList();
+}
+
+function updateSubSortIcons() {
+    document.querySelectorAll('#subs-table thead th.sortable').forEach(th => {
+        const icon = th.querySelector('.sort-icon');
+        const active = th.dataset.sort === subSortState.key;
+        th.classList.toggle('sorted', active);
+        if (!icon) return;
+        icon.className = 'fas sort-icon ' + (active ? (subSortState.dir === 1 ? 'fa-sort-up' : 'fa-sort-down') : 'fa-sort');
+    });
+}
+
+function updateSubSummary() {
+    const summary = document.getElementById('subs-summary');
+    const visibleCount = [...document.querySelectorAll('#subs-tbody tr')]
+        .filter(tr => tr.dataset.id && tr.style.display !== 'none').length;
+    summary.innerHTML = `共 <strong>${allSubscriptions.length}</strong> 个订阅 · 已选择 <strong>${selectedSubscriptions.size}</strong> 个${visibleCount !== allSubscriptions.length ? ` · 当前显示 <strong>${visibleCount}</strong> 个` : ''}`;
+    summary.classList.toggle('hidden', allSubscriptions.length === 0);
 }
 
 function toggleAllSubs(checked) {
@@ -171,6 +236,7 @@ function toggleAllSubs(checked) {
         else selectedSubscriptions.delete(cb.dataset.id);
     });
     document.getElementById('subs-check-all').checked = checked;
+    updateSubSummary();
     updateStats();
 }
 
@@ -180,6 +246,7 @@ function filterSubsList() {
         const text = tr.textContent.toLowerCase();
         tr.style.display = text.includes(q) ? '' : 'none';
     });
+    updateSubSummary();
 }
 
 // ============ Resources ============
