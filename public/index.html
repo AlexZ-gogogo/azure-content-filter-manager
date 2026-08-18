@@ -154,6 +154,24 @@
                             </tr></thead>
                             <tbody id="res-tbody"></tbody>
                         </table>
+                        <div class="pager hidden" id="res-pager">
+                            <div class="pager-size">每页
+                                <select class="toolbar-select" id="res-page-size">
+                                    <option value="25">25</option>
+                                    <option value="50" selected>50</option>
+                                    <option value="100">100</option>
+                                    <option value="200">200</option>
+                                </select>
+                                条
+                            </div>
+                            <div class="pager-nav">
+                                <button class="btn btn-sm btn-outline" id="res-page-first"><i class="fas fa-angle-double-left"></i></button>
+                                <button class="btn btn-sm btn-outline" id="res-page-prev"><i class="fas fa-angle-left"></i> 上一页</button>
+                                <span class="pager-info" id="res-page-info">第 1 / 1 页</span>
+                                <button class="btn btn-sm btn-outline" id="res-page-next">下一页 <i class="fas fa-angle-right"></i></button>
+                                <button class="btn btn-sm btn-outline" id="res-page-last"><i class="fas fa-angle-double-right"></i></button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -169,7 +187,26 @@
                 <div class="card">
                     <div class="card-body">
                         <div class="loading hidden" id="filters-loading"><div class="spinner"></div><span>加载筛选器中...</span></div>
+                        <div class="table-summary hidden" id="filters-summary"></div>
                         <div id="filters-view-content"><p class="empty-hint"><i class="fas fa-info-circle"></i> 请先在“订阅管理”中选择订阅，在“资源浏览”中加载并勾选资源，然后点击“加载筛选器”</p></div>
+                        <div class="pager hidden" id="filters-pager">
+                            <div class="pager-size">每页
+                                <select class="toolbar-select" id="filters-page-size">
+                                    <option value="5">5</option>
+                                    <option value="10" selected>10</option>
+                                    <option value="20">20</option>
+                                    <option value="50">50</option>
+                                </select>
+                                个资源
+                            </div>
+                            <div class="pager-nav">
+                                <button class="btn btn-sm btn-outline" id="filters-page-first"><i class="fas fa-angle-double-left"></i></button>
+                                <button class="btn btn-sm btn-outline" id="filters-page-prev"><i class="fas fa-angle-left"></i> 上一页</button>
+                                <span class="pager-info" id="filters-page-info">第 1 / 1 页</span>
+                                <button class="btn btn-sm btn-outline" id="filters-page-next">下一页 <i class="fas fa-angle-right"></i></button>
+                                <button class="btn btn-sm btn-outline" id="filters-page-last"><i class="fas fa-angle-double-right"></i></button>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -278,7 +315,10 @@
                 <div class="wiz-nav">
                     <button class="btn btn-outline" id="wiz-prev" disabled><i class="fas fa-chevron-left"></i> 上一步</button>
                     <button class="btn btn-primary" id="wiz-next">下一步 <i class="fas fa-chevron-right"></i></button>
-                    <button class="btn btn-success hidden" id="wiz-exec"><i class="fas fa-rocket"></i> 开始执行</button>
+                    <div class="wiz-actions">
+                        <button class="btn btn-danger hidden" id="wiz-cancel"><i class="fas fa-stop"></i> 取消任务</button>
+                        <button class="btn btn-success hidden" id="wiz-exec"><i class="fas fa-rocket"></i> 开始执行</button>
+                    </div>
                 </div>
             </div>
 

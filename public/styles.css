@@ -118,6 +118,17 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .table-summary { padding: 8px 16px; font-size: 13px; color: var(--text-secondary); border-bottom: 1px solid var(--border); background: #fafbfc; }
 .table-summary strong { color: var(--text); font-weight: 600; }
 
+/* Pager */
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 16px; border-top: 1px solid var(--border); background: #fafbfc; flex-wrap: wrap; }
+.pager-size { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.pager-nav { display: flex; align-items: center; gap: 6px; }
+.pager-info { font-size: 12px; color: var(--text-secondary); min-width: 110px; text-align: center; }
+
+/* Applied models */
+.applied-models { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; max-width: 55%; }
+.applied-model-tag { padding: 2px 8px; border-radius: 3px; font-size: 11px; background: var(--azure-blue-bg); color: var(--azure-blue); border: 1px solid var(--azure-blue-light); }
+.applied-none { font-size: 11px; color: var(--text-muted); }
+
 /* Filter config table */
 .filter-cfg-table td { vertical-align: middle; }
 .filter-cfg-table .action-cell select { padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius); font-size: 13px; min-width: 180px; }
@@ -184,6 +195,7 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .wiz-page { display: none; }
 .wiz-page.active { display: block; }
 .wiz-nav { display: flex; justify-content: space-between; margin-top: 16px; padding: 16px 0; }
+.wiz-actions { display: flex; align-items: center; gap: 8px; }
 
 /* Progress */
 .progress-section { margin-top: 20px; }
@@ -262,7 +274,8 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 /* Existing filters view */
 .filter-group { margin-bottom: 20px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .filter-group-header { background: #f5f5f5; padding: 10px 16px; font-weight: 600; font-size: 13px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-.filter-item { padding: 8px 16px; border-bottom: 1px solid #f0f0f0; font-size: 12px; display: flex; justify-content: space-between; }
+.filter-item { padding: 8px 16px; border-bottom: 1px solid #f0f0f0; font-size: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.filter-item .fmeta { display: flex; align-items: center; gap: 8px; }
 .filter-item:last-child { border-bottom: none; }
 .filter-badge { padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: 500; }
 .filter-badge.system { background: #e8e8e8; color: #666; }

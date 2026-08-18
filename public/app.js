@@ -10,6 +10,27 @@ let resSortState = { key: null, dir: 1 };
 let allSubscriptions = [];
 let subSortState = { key: null, dir: 1 };
 let wizardExecutionCompleted = false;
+let wizardExecuting = false;
+let wizardCancelRequested = false;
+let resViewList = [];
+let resPageState = { page: 1, size: 50 };
+let filtersViewData = [];
+let filtersPageState = { page: 1, size: 10 };
+const REQUEST_CONCURRENCY = 8;
+
+// Run async tasks with a bounded number of parallel requests
+async function mapWithConcurrency(items, limit, task) {
+    const results = new Array(items.length);
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (cursor < items.length) {
+            const current = cursor++;
+            results[current] = await task(items[current], current);
+        }
+    });
+    await Promise.all(workers);
+    return results;
+}
 
 document.addEventListener('DOMContentLoaded', () => {
     initMsal();
@@ -59,14 +80,37 @@ function setupEventListeners() {
     document.querySelectorAll('#res-table thead th.sortable').forEach(th => {
         th.addEventListener('click', () => sortResources(th.dataset.sort));
     });
+    document.getElementById('res-page-size').addEventListener('change', (e) => {
+        resPageState.size = parseInt(e.target.value);
+        resPageState.page = 1;
+        applyResourceView();
+    });
+    document.getElementById('res-page-first').addEventListener('click', () => gotoResPage(1));
+    document.getElementById('res-page-prev').addEventListener('click', () => gotoResPage(resPageState.page - 1));
+    document.getElementById('res-page-next').addEventListener('click', () => gotoResPage(resPageState.page + 1));
+    document.getElementById('res-page-last').addEventListener('click', () => gotoResPage(resTotalPages()));
     
     // Filters View
     document.getElementById('btn-load-filters').addEventListener('click', loadExistingFilters);
+    document.getElementById('filters-show-system').addEventListener('change', () => {
+        filtersPageState.page = 1;
+        renderFiltersView();
+    });
+    document.getElementById('filters-page-size').addEventListener('change', (e) => {
+        filtersPageState.size = parseInt(e.target.value);
+        filtersPageState.page = 1;
+        renderFiltersView();
+    });
+    document.getElementById('filters-page-first').addEventListener('click', () => gotoFiltersPage(1));
+    document.getElementById('filters-page-prev').addEventListener('click', () => gotoFiltersPage(filtersPageState.page - 1));
+    document.getElementById('filters-page-next').addEventListener('click', () => gotoFiltersPage(filtersPageState.page + 1));
+    document.getElementById('filters-page-last').addEventListener('click', () => gotoFiltersPage(filtersTotalPages()));
     
     // Wizard
     document.getElementById('wiz-prev').addEventListener('click', wizPrev);
     document.getElementById('wiz-next').addEventListener('click', wizNext);
     document.getElementById('wiz-exec').addEventListener('click', executeWizard);
+    document.getElementById('wiz-cancel').addEventListener('click', requestWizardCancel);
     
     // Presets
     document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -264,17 +308,24 @@ async function loadResources() {
     allResources = [];
     
     try {
-        for (const subId of selectedSubscriptions) {
-            const resources = await listCognitiveServicesAccounts(subId);
-            resources.forEach(r => { r._subId = subId; allResources.push(r); });
-        }
+        const subIds = Array.from(selectedSubscriptions);
+        const perSubscription = await mapWithConcurrency(subIds, REQUEST_CONCURRENCY, async (subId) => {
+            try {
+                const resources = await listCognitiveServicesAccounts(subId);
+                resources.forEach(r => { r._subId = subId; });
+                return resources;
+            } catch (e) {
+                return [];
+            }
+        });
+        perSubscription.forEach(list => allResources.push(...list));
         // Assign stable index used for selection identity; select all by default
         selectedResources.clear();
         allResources.forEach((r, i) => { r._idx = i; selectedResources.add(i); });
         resSortState = { key: null, dir: 1 };
+        resPageState.page = 1;
         loading.classList.add('hidden');
-        renderResources(allResources);
-        updateResSummary();
+        applyResourceView();
         updateSortIcons();
         updateStats();
     } catch (err) {
@@ -300,33 +351,67 @@ function sortResources(key) {
     if (!key) return;
     if (resSortState.key === key) resSortState.dir *= -1;
     else { resSortState.key = key; resSortState.dir = 1; }
-    const sorted = [...allResources].sort((a, b) => {
-        const va = resSortValue(a, key), vb = resSortValue(b, key);
-        if (va < vb) return -1 * resSortState.dir;
-        if (va > vb) return 1 * resSortState.dir;
-        return 0;
-    });
-    renderResources(sorted);
+    resPageState.page = 1;
+    applyResourceView();
     updateSortIcons();
-    filterResourcesList();
 }
 
-function updateSortIcons() {
-    document.querySelectorAll('#res-table thead th.sortable').forEach(th => {
-        const icon = th.querySelector('.sort-icon');
-        const active = th.dataset.sort === resSortState.key;
-        th.classList.toggle('sorted', active);
-        if (!icon) return;
-        if (active) icon.className = 'fas sort-icon ' + (resSortState.dir === 1 ? 'fa-sort-up' : 'fa-sort-down');
-        else icon.className = 'fas fa-sort sort-icon';
+function resTotalPages() {
+    return Math.max(1, Math.ceil(resViewList.length / resPageState.size));
+}
+
+function gotoResPage(page) {
+    const target = Math.min(Math.max(1, page), resTotalPages());
+    if (target === resPageState.page) return;
+    resPageState.page = target;
+    applyResourceView();
+}
+
+// Recompute the filtered + sorted view, then render only the current page
+function applyResourceView() {
+    const query = document.getElementById('res-search').value.toLowerCase();
+    const typeFilter = document.getElementById('res-type-filter').value;
+    resViewList = allResources.filter(r => {
+        const p = parseResourceId(r.id);
+        const subName = subscriptionMap[r._subId] || r._subId || '';
+        const haystack = `${r.name} ${r.kind || ''} ${p.resourceGroup} ${r.location} ${subName}`.toLowerCase();
+        const matchText = !query || haystack.includes(query);
+        const matchType = !typeFilter || (r.kind || '').includes(typeFilter);
+        return matchText && matchType;
     });
+    if (resSortState.key) {
+        resViewList.sort((a, b) => {
+            const va = resSortValue(a, resSortState.key), vb = resSortValue(b, resSortState.key);
+            if (va < vb) return -1 * resSortState.dir;
+            if (va > vb) return 1 * resSortState.dir;
+            return 0;
+        });
+    }
+    resPageState.page = Math.min(resPageState.page, resTotalPages());
+    const start = (resPageState.page - 1) * resPageState.size;
+    renderResources(resViewList.slice(start, start + resPageState.size));
+    updateResSummary();
+    updateResPager();
+}
+
+function updateResPager() {
+    const pager = document.getElementById('res-pager');
+    pager.classList.toggle('hidden', allResources.length === 0);
+    document.getElementById('res-page-info').textContent = `第 ${resPageState.page} / ${resTotalPages()} 页`;
+    const atFirst = resPageState.page <= 1;
+    const atLast = resPageState.page >= resTotalPages();
+    document.getElementById('res-page-first').disabled = atFirst;
+    document.getElementById('res-page-prev').disabled = atFirst;
+    document.getElementById('res-page-next').disabled = atLast;
+    document.getElementById('res-page-last').disabled = atLast;
 }
 
 function updateResSummary() {
     const el = document.getElementById('res-summary');
     if (!el) return;
     const subCount = new Set(allResources.map(r => r._subId)).size;
-    el.innerHTML = `正在显示 <strong>${allResources.length}</strong> 个资源 · 来自 <strong>${subCount}</strong> 个订阅`;
+    const filteredNote = resViewList.length !== allResources.length ? ` · 当前筛选 <strong>${resViewList.length}</strong> 个` : '';
+    el.innerHTML = `共 <strong>${allResources.length}</strong> 个资源 · 来自 <strong>${subCount}</strong> 个订阅${filteredNote} · 已选择 <strong>${selectedResources.size}</strong> 个`;
     el.classList.toggle('hidden', allResources.length === 0);
 }
 
@@ -356,31 +441,38 @@ function renderResources(resources) {
         cb.addEventListener('change', (e) => {
             if (e.target.checked) selectedResources.add(i);
             else selectedResources.delete(i);
+            updateResSummary();
+            updateStats();
         });
         tbody.appendChild(tr);
     });
 }
 
+// Applies to every resource in the current filtered view, not just the visible page
 function toggleAllRes(checked) {
-    document.querySelectorAll('.res-cb').forEach(cb => {
-        cb.checked = checked;
-        const idx = parseInt(cb.dataset.index);
-        if (checked) selectedResources.add(idx);
-        else selectedResources.delete(idx);
+    resViewList.forEach(r => {
+        if (checked) selectedResources.add(r._idx);
+        else selectedResources.delete(r._idx);
     });
+    document.querySelectorAll('.res-cb').forEach(cb => { cb.checked = checked; });
     document.getElementById('res-check-all').checked = checked;
+    updateResSummary();
+    updateStats();
 }
 
 function filterResourcesList() {
-    const q = document.getElementById('res-search').value.toLowerCase();
-    const typeFilter = document.getElementById('res-type-filter').value;
-    document.querySelectorAll('#res-tbody tr').forEach(tr => {
-        const idx = parseInt(tr.dataset.index);
-        if (isNaN(idx)) return;
-        const r = allResources[idx];
-        const matchText = tr.textContent.toLowerCase().includes(q);
-        const matchType = !typeFilter || (r.kind || '').includes(typeFilter);
-        tr.style.display = (matchText && matchType) ? '' : 'none';
+    resPageState.page = 1;
+    applyResourceView();
+}
+
+function updateSortIcons() {
+    document.querySelectorAll('#res-table thead th.sortable').forEach(th => {
+        const icon = th.querySelector('.sort-icon');
+        const active = th.dataset.sort === resSortState.key;
+        th.classList.toggle('sorted', active);
+        if (!icon) return;
+        if (active) icon.className = 'fas sort-icon ' + (resSortState.dir === 1 ? 'fa-sort-up' : 'fa-sort-down');
+        else icon.className = 'fas fa-sort sort-icon';
     });
 }
 
@@ -396,37 +488,124 @@ async function loadExistingFilters() {
     const loading = document.getElementById('filters-loading');
     loading.classList.remove('hidden');
     container.innerHTML = '';
+    filtersViewData = [];
+    filtersPageState.page = 1;
     
-    let totalFilters = 0;
-    const showSystem = document.getElementById('filters-show-system').checked;
     try {
-        for (const idx of indices) {
+        filtersViewData = await mapWithConcurrency(indices, REQUEST_CONCURRENCY, async (idx) => {
             const r = allResources[idx];
             const p = parseResourceId(r.id);
             try {
-                const policies = await listRaiPolicies(p.subscriptionId, p.resourceGroup, p.accountName);
-                const filteredPolicies = showSystem ? policies : policies.filter(pol => pol.properties?.type !== 'SystemManaged');
-                if (filteredPolicies.length > 0) {
-                    let html = `<div class="filter-group"><div class="filter-group-header"><span>${r.name} (${r.location})</span><span>${filteredPolicies.length} 个筛选器</span></div>`;
-                    filteredPolicies.forEach(pol => {
-                        const isSystem = pol.properties?.type === 'SystemManaged';
-                        totalFilters += isSystem ? 0 : 1;
-                        html += `<div class="filter-item"><span>${pol.name}</span><span class="filter-badge ${isSystem ? 'system' : 'custom'}">${isSystem ? '系统' : '自定义'}</span></div>`;
-                    });
-                    html += '</div>';
-                    container.innerHTML += html;
-                }
+                const [policies, deployments] = await Promise.all([
+                    listRaiPolicies(p.subscriptionId, p.resourceGroup, p.accountName),
+                    listDeployments(p.subscriptionId, p.resourceGroup, p.accountName).catch(() => [])
+                ]);
+                const appliedModels = {};
+                deployments.forEach(dep => {
+                    const policyName = dep.properties?.raiPolicyName;
+                    if (!policyName) return;
+                    if (!appliedModels[policyName]) appliedModels[policyName] = [];
+                    appliedModels[policyName].push(dep.name);
+                });
+                return {
+                    resourceName: r.name,
+                    location: r.location,
+                    error: null,
+                    policies: policies.map(pol => ({
+                        name: pol.name,
+                        isSystem: isSystemPolicy(pol),
+                        appliedModels: appliedModels[pol.name] || []
+                    }))
+                };
             } catch (e) {
-                container.innerHTML += `<div class="filter-group"><div class="filter-group-header"><span>${r.name}</span><span style="color:var(--danger)">加载失败</span></div></div>`;
+                return { resourceName: r.name, location: r.location, error: e.message, policies: [] };
             }
-        }
-        if (container.innerHTML === '') container.innerHTML = '<p class="empty-hint">已选资源中未找到筛选器</p>';
+        });
         loading.classList.add('hidden');
-        document.getElementById('stat-filters').textContent = totalFilters;
+        renderFiltersView();
     } catch (err) {
         loading.classList.add('hidden');
         container.innerHTML = `<p style="color:var(--danger)">加载失败: ${err.message}</p>`;
     }
+}
+
+// Azure marks built-in policies as SystemManaged; older API responses only expose the Microsoft.* name
+function isSystemPolicy(policy) {
+    if (policy.properties?.type === 'SystemManaged') return true;
+    return /^microsoft\./i.test(policy.name || '');
+}
+
+function getFiltersViewGroups() {
+    const showSystem = document.getElementById('filters-show-system').checked;
+    return filtersViewData
+        .map(group => ({
+            ...group,
+            visiblePolicies: showSystem ? group.policies : group.policies.filter(pol => !pol.isSystem)
+        }))
+        .filter(group => group.error || group.visiblePolicies.length > 0);
+}
+
+function filtersTotalPages() {
+    return Math.max(1, Math.ceil(getFiltersViewGroups().length / filtersPageState.size));
+}
+
+function gotoFiltersPage(page) {
+    const target = Math.min(Math.max(1, page), filtersTotalPages());
+    if (target === filtersPageState.page) return;
+    filtersPageState.page = target;
+    renderFiltersView();
+}
+
+function renderFiltersView() {
+    const container = document.getElementById('filters-view-content');
+    const summary = document.getElementById('filters-summary');
+    const pager = document.getElementById('filters-pager');
+    if (filtersViewData.length === 0) {
+        summary.classList.add('hidden');
+        pager.classList.add('hidden');
+        return;
+    }
+    
+    const groups = getFiltersViewGroups();
+    const customCount = filtersViewData.reduce((sum, g) => sum + g.policies.filter(p => !p.isSystem).length, 0);
+    const systemCount = filtersViewData.reduce((sum, g) => sum + g.policies.filter(p => p.isSystem).length, 0);
+    const shownCount = groups.reduce((sum, g) => sum + (g.visiblePolicies?.length || 0), 0);
+    document.getElementById('stat-filters').textContent = customCount;
+    
+    summary.innerHTML = `共 <strong>${filtersViewData.length}</strong> 个资源 · 自定义 <strong>${customCount}</strong> 个 · 系统 <strong>${systemCount}</strong> 个 · 当前显示 <strong>${shownCount}</strong> 个筛选器`;
+    summary.classList.remove('hidden');
+    
+    if (groups.length === 0) {
+        container.innerHTML = '<p class="empty-hint">已选资源中未找到符合条件的筛选器</p>';
+        pager.classList.add('hidden');
+        return;
+    }
+    
+    filtersPageState.page = Math.min(filtersPageState.page, filtersTotalPages());
+    const start = (filtersPageState.page - 1) * filtersPageState.size;
+    const pageGroups = groups.slice(start, start + filtersPageState.size);
+    
+    container.innerHTML = pageGroups.map(group => {
+        if (group.error) {
+            return `<div class="filter-group"><div class="filter-group-header"><span>${group.resourceName}</span><span style="color:var(--danger)">加载失败: ${group.error.substring(0, 120)}</span></div></div>`;
+        }
+        const items = group.visiblePolicies.map(pol => {
+            const applied = pol.appliedModels.length > 0
+                ? `<span class="applied-models">${pol.appliedModels.map(m => `<span class="applied-model-tag">${m}</span>`).join('')}</span>`
+                : '<span class="applied-none">未应用到模型</span>';
+            return `<div class="filter-item"><span class="fmeta"><span>${pol.name}</span><span class="filter-badge ${pol.isSystem ? 'system' : 'custom'}">${pol.isSystem ? '系统' : '自定义'}</span></span>${applied}</div>`;
+        }).join('');
+        return `<div class="filter-group"><div class="filter-group-header"><span>${group.resourceName} (${group.location})</span><span>${group.visiblePolicies.length} 个筛选器</span></div>${items}</div>`;
+    }).join('');
+    
+    pager.classList.remove('hidden');
+    document.getElementById('filters-page-info').textContent = `第 ${filtersPageState.page} / ${filtersTotalPages()} 页`;
+    const atFirst = filtersPageState.page <= 1;
+    const atLast = filtersPageState.page >= filtersTotalPages();
+    document.getElementById('filters-page-first').disabled = atFirst;
+    document.getElementById('filters-page-prev').disabled = atFirst;
+    document.getElementById('filters-page-next').disabled = atLast;
+    document.getElementById('filters-page-last').disabled = atLast;
 }
 
 // ============ Filter Table Init ============
@@ -695,10 +874,21 @@ function updateWizardUI() {
     document.getElementById('wiz-next').classList.toggle('hidden', currentWizStep === MAX_WIZ_STEPS);
     const executeButton = document.getElementById('wiz-exec');
     executeButton.classList.toggle('hidden', currentWizStep !== MAX_WIZ_STEPS);
-    executeButton.disabled = wizardExecutionCompleted;
+    executeButton.disabled = wizardExecutionCompleted || wizardExecuting;
     executeButton.innerHTML = wizardExecutionCompleted
         ? '<i class="fas fa-check"></i> 已完成执行'
         : '<i class="fas fa-rocket"></i> 开始执行';
+    const cancelButton = document.getElementById('wiz-cancel');
+    cancelButton.classList.toggle('hidden', !wizardExecuting);
+}
+
+function requestWizardCancel() {
+    if (!wizardExecuting) return;
+    wizardCancelRequested = true;
+    const cancelButton = document.getElementById('wiz-cancel');
+    cancelButton.disabled = true;
+    cancelButton.innerHTML = '<i class="fas fa-hourglass-half"></i> 取消中...';
+    log(document.getElementById('exec-log'), '已请求取消，当前资源处理完后停止', 'w');
 }
 
 function resetWizardExecutionState() {
@@ -781,9 +971,21 @@ async function executeWizard() {
     }
     log(logEl, '─'.repeat(50), 'i');
     
+    wizardExecuting = true;
+    wizardCancelRequested = false;
+    const cancelButton = document.getElementById('wiz-cancel');
+    cancelButton.disabled = false;
+    cancelButton.innerHTML = '<i class="fas fa-stop"></i> 取消任务';
+    cancelButton.classList.remove('hidden');
     document.getElementById('wiz-exec').disabled = true;
     
+    let cancelled = false;
     for (const idx of indices) {
+        if (wizardCancelRequested) {
+            cancelled = true;
+            log(logEl, '⏹ 任务已取消，剩余资源未处理', 'w');
+            break;
+        }
         const r = allResources[idx];
         const p = parseResourceId(r.id);
         let usedFallback = false;
@@ -858,7 +1060,7 @@ async function executeWizard() {
     }
     
     log(logEl, '─'.repeat(50), 'i');
-    log(logEl, `完成! 成功: ${done}, 降级: ${fallbackUsed}, 失败: ${errors}, 共 ${total}`, 
+    log(logEl, `${cancelled ? '已取消' : '完成'}! 成功: ${done}, 降级: ${fallbackUsed}, 失败: ${errors}, 共 ${total}`, 
         errors + deploymentErrors === 0 ? 's' : 'w');
     if (applyToModels) {
         log(logEl, `模型应用: 成功 ${deploymentsApplied}, 失败 ${deploymentErrors}`, deploymentErrors === 0 ? 's' : 'w');
@@ -866,14 +1068,24 @@ async function executeWizard() {
     if (fallbackUsed > 0) {
         log(logEl, `⚠ ${fallbackUsed} 个资源使用了降级配置（权限不足）`, 'w');
     }
-    addActivity(`批量创建 "${filterName}" - 成功${done} 降级${fallbackUsed} 失败${errors}/${total}${applyToModels ? `，模型应用成功${deploymentsApplied}失败${deploymentErrors}` : ''}`);
-    wizardExecutionCompleted = true;
+    addActivity(`批量创建 "${filterName}"${cancelled ? '（已取消）' : ''} - 成功${done} 降级${fallbackUsed} 失败${errors}/${total}${applyToModels ? `，模型应用成功${deploymentsApplied}失败${deploymentErrors}` : ''}`);
+    wizardExecuting = false;
+    wizardCancelRequested = false;
+    cancelButton.classList.add('hidden');
+    wizardExecutionCompleted = !cancelled;
     const executeButton = document.getElementById('wiz-exec');
-    executeButton.disabled = true;
-    executeButton.innerHTML = '<i class="fas fa-check"></i> 已完成执行';
+    executeButton.disabled = wizardExecutionCompleted;
+    executeButton.innerHTML = wizardExecutionCompleted
+        ? '<i class="fas fa-check"></i> 已完成执行'
+        : '<i class="fas fa-rocket"></i> 开始执行';
     const hasErrors = errors + deploymentErrors > 0;
-    result.className = `execution-result ${hasErrors ? 'warning' : 'success'}`;
-    result.innerHTML = `<i class="fas ${hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>任务已完成，已锁定重复执行。</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span></div>`;
+    const processed = done + fallbackUsed + errors;
+    result.className = `execution-result ${cancelled || hasErrors ? 'warning' : 'success'}`;
+    const headline = cancelled
+        ? `任务已取消，已处理 ${processed}/${total} 个资源，可修改配置后重新执行。`
+        : '任务已完成，已锁定重复执行。';
+    result.innerHTML = `<i class="fas ${cancelled || hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>${headline}</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span></div>`;
+    result.classList.remove('hidden');
 }
 
 async function executeBatchApply() {
@@ -1115,9 +1327,7 @@ async function executeBatchDelete() {
 
 // ============ Helpers ============
 function getSelectedResourceIndices() {
-    const indices = [];
-    document.querySelectorAll('.res-cb:checked').forEach(cb => indices.push(parseInt(cb.dataset.index)));
-    return indices.length > 0 ? indices : Array.from(selectedResources);
+    return Array.from(selectedResources).sort((a, b) => a - b);
 }
 
 function gatherFilterConfig() {
