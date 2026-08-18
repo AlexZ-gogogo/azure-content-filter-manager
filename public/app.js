@@ -9,6 +9,7 @@ let subscriptionMap = {};
 let resSortState = { key: null, dir: 1 };
 let allSubscriptions = [];
 let subSortState = { key: null, dir: 1 };
+let wizardExecutionCompleted = false;
 
 document.addEventListener('DOMContentLoaded', () => {
     initMsal();
@@ -649,6 +650,7 @@ function isValidResourceName(name) {
 function wizPrev() {
     if (currentWizStep > 1) {
         currentWizStep--;
+        if (currentWizStep < MAX_WIZ_STEPS) resetWizardExecutionState();
         updateWizardUI();
     }
 }
@@ -691,7 +693,19 @@ function updateWizardUI() {
     
     document.getElementById('wiz-prev').disabled = (currentWizStep === 1);
     document.getElementById('wiz-next').classList.toggle('hidden', currentWizStep === MAX_WIZ_STEPS);
-    document.getElementById('wiz-exec').classList.toggle('hidden', currentWizStep !== MAX_WIZ_STEPS);
+    const executeButton = document.getElementById('wiz-exec');
+    executeButton.classList.toggle('hidden', currentWizStep !== MAX_WIZ_STEPS);
+    executeButton.disabled = wizardExecutionCompleted;
+    executeButton.innerHTML = wizardExecutionCompleted
+        ? '<i class="fas fa-check"></i> 已完成执行'
+        : '<i class="fas fa-rocket"></i> 开始执行';
+}
+
+function resetWizardExecutionState() {
+    wizardExecutionCompleted = false;
+    const result = document.getElementById('exec-result');
+    result.classList.add('hidden');
+    result.innerHTML = '';
 }
 
 function renderSummary() {
@@ -727,6 +741,7 @@ function renderSummary() {
 
 // ============ Execute Operations ============
 async function executeWizard() {
+    if (wizardExecutionCompleted) return;
     const filterName = document.getElementById('filter-name').value.trim();
     const applyToModels = document.getElementById('apply-to-models').checked;
     const indices = getSelectedResourceIndices();
@@ -745,10 +760,13 @@ async function executeWizard() {
     
     const section = document.getElementById('exec-progress-section');
     section.classList.remove('hidden');
+    const result = document.getElementById('exec-result');
+    result.classList.add('hidden');
+    result.innerHTML = '';
     const logEl = document.getElementById('exec-log');
     logEl.innerHTML = '';
     
-    let done = 0, errors = 0, fallbackUsed = 0;
+    let done = 0, errors = 0, fallbackUsed = 0, deploymentsApplied = 0, deploymentErrors = 0;
     const total = indices.length;
     
     log(logEl, `开始批量创建筛选器: ${filterName}`, 'i');
@@ -819,12 +837,15 @@ async function executeWizard() {
                     try {
                         await updateDeploymentRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, dep.name, actualFilterName, dep);
                         log(logEl, `[${r.name}] ✓ 已应用到: ${dep.name}${usedFallback ? ' (降级配置)' : ''}`, 's');
+                        deploymentsApplied++;
                     } catch (e) {
                         log(logEl, `[${r.name}] ✗ 应用失败 ${dep.name}: ${e.message}`, 'e');
+                        deploymentErrors++;
                     }
                 }
             } catch (e) {
                 log(logEl, `[${r.name}] ✗ 获取部署列表失败: ${e.message}`, 'e');
+                deploymentErrors++;
             }
         }
         
@@ -838,12 +859,21 @@ async function executeWizard() {
     
     log(logEl, '─'.repeat(50), 'i');
     log(logEl, `完成! 成功: ${done}, 降级: ${fallbackUsed}, 失败: ${errors}, 共 ${total}`, 
-        errors === 0 ? 's' : 'w');
+        errors + deploymentErrors === 0 ? 's' : 'w');
+    if (applyToModels) {
+        log(logEl, `模型应用: 成功 ${deploymentsApplied}, 失败 ${deploymentErrors}`, deploymentErrors === 0 ? 's' : 'w');
+    }
     if (fallbackUsed > 0) {
         log(logEl, `⚠ ${fallbackUsed} 个资源使用了降级配置（权限不足）`, 'w');
     }
-    addActivity(`批量创建 "${filterName}" - 成功${done} 降级${fallbackUsed} 失败${errors}/${total}`);
-    document.getElementById('wiz-exec').disabled = false;
+    addActivity(`批量创建 "${filterName}" - 成功${done} 降级${fallbackUsed} 失败${errors}/${total}${applyToModels ? `，模型应用成功${deploymentsApplied}失败${deploymentErrors}` : ''}`);
+    wizardExecutionCompleted = true;
+    const executeButton = document.getElementById('wiz-exec');
+    executeButton.disabled = true;
+    executeButton.innerHTML = '<i class="fas fa-check"></i> 已完成执行';
+    const hasErrors = errors + deploymentErrors > 0;
+    result.className = `execution-result ${hasErrors ? 'warning' : 'success'}`;
+    result.innerHTML = `<i class="fas ${hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>任务已完成，已锁定重复执行。</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span></div>`;
 }
 
 async function executeBatchApply() {
