@@ -109,7 +109,7 @@ function setupEventListeners() {
     // Wizard
     document.getElementById('wiz-prev').addEventListener('click', wizPrev);
     document.getElementById('wiz-next').addEventListener('click', wizNext);
-    document.getElementById('wiz-exec').addEventListener('click', executeWizard);
+    document.getElementById('wiz-exec').addEventListener('click', () => executeWizard());
     document.getElementById('wiz-cancel').addEventListener('click', requestWizardCancel);
     
     // Presets
@@ -930,11 +930,13 @@ function renderSummary() {
 }
 
 // ============ Execute Operations ============
-async function executeWizard() {
-    if (wizardExecutionCompleted) return;
+async function executeWizard(retryIndices) {
+    const isRetry = Array.isArray(retryIndices) && retryIndices.length > 0;
+    if (wizardExecuting) return;
+    if (wizardExecutionCompleted && !isRetry) return;
     const filterName = document.getElementById('filter-name').value.trim();
     const applyToModels = document.getElementById('apply-to-models').checked;
-    const indices = getSelectedResourceIndices();
+    const indices = isRetry ? retryIndices : getSelectedResourceIndices();
     
     if (indices.length === 0) { alert('没有选中的资源'); return; }
     
@@ -954,13 +956,14 @@ async function executeWizard() {
     result.classList.add('hidden');
     result.innerHTML = '';
     const logEl = document.getElementById('exec-log');
-    logEl.innerHTML = '';
+    if (!isRetry) logEl.innerHTML = '';
     
     let done = 0, errors = 0, fallbackUsed = 0, deploymentsApplied = 0, deploymentErrors = 0;
     const failures = [];
     const subName = (parsed) => subscriptionMap[parsed.subscriptionId] || parsed.subscriptionId;
     function recordFailure(resource, parsed, stage, target, message) {
         failures.push({
+            idx: resource._idx,
             resource: resource.name,
             subscription: subName(parsed),
             subscriptionId: parsed.subscriptionId,
@@ -972,8 +975,8 @@ async function executeWizard() {
     }
     const total = indices.length;
     
-    log(logEl, `开始批量创建筛选器: ${filterName}`, 'i');
-    log(logEl, `目标资源: ${total} 个`, 'i');
+    log(logEl, isRetry ? `── 重试开始 ──` : `开始批量创建筛选器: ${filterName}`, 'i');
+    log(logEl, isRetry ? `重试失败资源: ${total} 个` : `目标资源: ${total} 个`, 'i');
     if (needsApproval && fallbackEnabled) {
         const fbAction = document.getElementById('fallback-action').value;
         if (fbAction === 'skip') {
@@ -1100,18 +1103,28 @@ async function executeWizard() {
     result.className = `execution-result ${cancelled || hasErrors ? 'warning' : 'success'}`;
     const headline = cancelled
         ? `任务已取消，已处理 ${processed}/${total} 个资源，可修改配置后重新执行。`
-        : '任务已完成，已锁定重复执行。';
+        : (isRetry ? '重试已完成。' : '任务已完成，已锁定重复执行。');
+    const failedResourceCount = new Set(failures.map(f => f.idx)).size;
     const failureHtml = failures.length === 0 ? '' : `
         <details class="failure-details" open>
-            <summary>失败明细（${failures.length} 条）</summary>
+            <summary>失败明细（${failures.length} 条 · ${failedResourceCount} 个资源）</summary>
             <table class="data-table failure-table">
                 <thead><tr><th>订阅</th><th>资源组</th><th>资源</th><th>阶段</th><th>对象</th><th>错误</th></tr></thead>
                 <tbody>${failures.map(f => `<tr><td>${escapeHtml(f.subscription)}</td><td>${escapeHtml(f.resourceGroup)}</td><td>${escapeHtml(f.resource)}</td><td>${escapeHtml(f.stage)}</td><td>${escapeHtml(f.target)}</td><td class="failure-msg">${escapeHtml(f.message)}</td></tr>`).join('')}</tbody>
             </table>
-            <button class="btn btn-sm btn-outline" id="copy-failures"><i class="fas fa-copy"></i> 复制失败明细</button>
+            <div class="failure-actions">
+                <button class="btn btn-sm btn-primary" id="retry-failures"><i class="fas fa-redo"></i> 重试失败的 ${failedResourceCount} 个资源</button>
+                <button class="btn btn-sm btn-outline" id="copy-failures"><i class="fas fa-copy"></i> 复制失败明细</button>
+            </div>
         </details>`;
     result.innerHTML = `<i class="fas ${cancelled || hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>${headline}</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span>${failureHtml}</div>`;
     result.classList.remove('hidden');
+    const retryButton = document.getElementById('retry-failures');
+    if (retryButton) {
+        retryButton.addEventListener('click', () => {
+            executeWizard([...new Set(failures.map(f => f.idx))]);
+        });
+    }
     const copyButton = document.getElementById('copy-failures');
     if (copyButton) {
         copyButton.addEventListener('click', () => {

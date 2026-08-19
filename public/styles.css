@@ -215,6 +215,7 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .failure-table { margin-top: 8px; }
 .failure-table th, .failure-table td { padding: 6px 10px; font-size: 12px; vertical-align: top; }
 .failure-table .failure-msg { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; word-break: break-all; max-width: 420px; }
+.failure-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
 
 /* Log Box */
 .log-box { background: #1e1e1e; color: #d4d4d4; border-radius: var(--radius); padding: 14px; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px; max-height: 350px; overflow-y: auto; line-height: 1.8; min-height: 60px; }
