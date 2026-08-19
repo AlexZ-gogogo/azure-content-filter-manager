@@ -209,6 +209,12 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .execution-result div { display: flex; flex-direction: column; gap: 3px; }
 .execution-result.success { color: #107c10; background: #e6f7e6; border-color: #9fd99f; }
 .execution-result.warning { color: #8a5a00; background: #fff4e6; border-color: #f0c36d; }
+.execution-result > div { flex: 1; min-width: 0; }
+.failure-details { margin-top: 10px; background: #fff; border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; color: var(--text); }
+.failure-details summary { cursor: pointer; font-weight: 600; font-size: 12px; color: var(--danger); }
+.failure-table { margin-top: 8px; }
+.failure-table th, .failure-table td { padding: 6px 10px; font-size: 12px; vertical-align: top; }
+.failure-table .failure-msg { font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 11px; word-break: break-all; max-width: 420px; }
 
 /* Log Box */
 .log-box { background: #1e1e1e; color: #d4d4d4; border-radius: var(--radius); padding: 14px; font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px; max-height: 350px; overflow-y: auto; line-height: 1.8; min-height: 60px; }

@@ -957,6 +957,19 @@ async function executeWizard() {
     logEl.innerHTML = '';
     
     let done = 0, errors = 0, fallbackUsed = 0, deploymentsApplied = 0, deploymentErrors = 0;
+    const failures = [];
+    const subName = (parsed) => subscriptionMap[parsed.subscriptionId] || parsed.subscriptionId;
+    function recordFailure(resource, parsed, stage, target, message) {
+        failures.push({
+            resource: resource.name,
+            subscription: subName(parsed),
+            subscriptionId: parsed.subscriptionId,
+            resourceGroup: parsed.resourceGroup,
+            stage,
+            target: target || '-',
+            message: (message || '').toString().substring(0, 300)
+        });
+    }
     const total = indices.length;
     
     log(logEl, `开始批量创建筛选器: ${filterName}`, 'i');
@@ -1012,7 +1025,8 @@ async function executeWizard() {
                         fallbackUsed++;
                     } catch (fbErr) {
                         errors++;
-                        log(logEl, `[${r.name}] ✗ 降级也失败: ${fbErr.message}`, 'e');
+                        recordFailure(r, p, '创建降级筛选器', actualFilterName, fbErr.message);
+                        log(logEl, `[${subName(p)} / ${r.name}] ✗ 降级也失败: ${fbErr.message}`, 'e');
                         updateProgress('exec-progress', 'exec-progress-text', done + errors + fallbackUsed, total);
                         continue;
                     }
@@ -1025,7 +1039,8 @@ async function executeWizard() {
                 }
             } else {
                 errors++;
-                log(logEl, `[${r.name}] ✗ 失败: ${(err.message || String(err)).substring(0, 300)}`, 'e');
+                recordFailure(r, p, '创建筛选器', filterName, err.message || String(err));
+                log(logEl, `[${subName(p)} / ${r.name}] ✗ 失败: ${(err.message || String(err)).substring(0, 300)}`, 'e');
                 updateProgress('exec-progress', 'exec-progress-text', done + errors + fallbackUsed, total);
                 continue;
             }
@@ -1041,12 +1056,14 @@ async function executeWizard() {
                         log(logEl, `[${r.name}] ✓ 已应用到: ${dep.name}${usedFallback ? ' (降级配置)' : ''}`, 's');
                         deploymentsApplied++;
                     } catch (e) {
-                        log(logEl, `[${r.name}] ✗ 应用失败 ${dep.name}: ${e.message}`, 'e');
+                        recordFailure(r, p, '应用到模型', dep.name, e.message);
+                        log(logEl, `[${subName(p)} / ${r.name}] ✗ 应用失败 ${dep.name}: ${e.message}`, 'e');
                         deploymentErrors++;
                     }
                 }
             } catch (e) {
-                log(logEl, `[${r.name}] ✗ 获取部署列表失败: ${e.message}`, 'e');
+                recordFailure(r, p, '获取部署列表', '-', e.message);
+                log(logEl, `[${subName(p)} / ${r.name}] ✗ 获取部署列表失败: ${e.message}`, 'e');
                 deploymentErrors++;
             }
         }
@@ -1084,8 +1101,30 @@ async function executeWizard() {
     const headline = cancelled
         ? `任务已取消，已处理 ${processed}/${total} 个资源，可修改配置后重新执行。`
         : '任务已完成，已锁定重复执行。';
-    result.innerHTML = `<i class="fas ${cancelled || hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>${headline}</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span></div>`;
+    const failureHtml = failures.length === 0 ? '' : `
+        <details class="failure-details" open>
+            <summary>失败明细（${failures.length} 条）</summary>
+            <table class="data-table failure-table">
+                <thead><tr><th>订阅</th><th>资源组</th><th>资源</th><th>阶段</th><th>对象</th><th>错误</th></tr></thead>
+                <tbody>${failures.map(f => `<tr><td>${escapeHtml(f.subscription)}</td><td>${escapeHtml(f.resourceGroup)}</td><td>${escapeHtml(f.resource)}</td><td>${escapeHtml(f.stage)}</td><td>${escapeHtml(f.target)}</td><td class="failure-msg">${escapeHtml(f.message)}</td></tr>`).join('')}</tbody>
+            </table>
+            <button class="btn btn-sm btn-outline" id="copy-failures"><i class="fas fa-copy"></i> 复制失败明细</button>
+        </details>`;
+    result.innerHTML = `<i class="fas ${cancelled || hasErrors ? 'fa-exclamation-triangle' : 'fa-check-circle'}"></i><div><strong>${headline}</strong><span>筛选器：成功 ${done} 个${fallbackUsed ? `，降级 ${fallbackUsed} 个` : ''}${errors ? `，失败 ${errors} 个` : ''}，共 ${total} 个资源。${applyToModels ? ` 模型应用：成功 ${deploymentsApplied} 个，失败 ${deploymentErrors} 个。` : ''}</span>${failureHtml}</div>`;
     result.classList.remove('hidden');
+    const copyButton = document.getElementById('copy-failures');
+    if (copyButton) {
+        copyButton.addEventListener('click', () => {
+            const text = failures.map(f => `${f.subscription} (${f.subscriptionId}) | ${f.resourceGroup} | ${f.resource} | ${f.stage} | ${f.target} | ${f.message}`).join('\n');
+            navigator.clipboard.writeText(text).then(() => {
+                copyButton.innerHTML = '<i class="fas fa-check"></i> 已复制';
+            });
+        });
+    }
+}
+
+function escapeHtml(text) {
+    return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 async function executeBatchApply() {
