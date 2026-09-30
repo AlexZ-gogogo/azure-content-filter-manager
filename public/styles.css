@@ -267,6 +267,41 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 .filter-selected { background: var(--azure-blue-bg) !important; }
 .model-current-filter { font-size: 11px; color: var(--text-muted); margin-left: 4px; }
 
+/* Batch apply: clear scope, per-resource target, and a readable change preview */
+.apply-step-number { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; background: var(--azure-blue-bg); color: var(--azure-blue); font-size: 12px; }
+.apply-scope-summary { padding: 10px 14px; margin-bottom: 12px; background: var(--azure-blue-bg); color: var(--azure-blue-dark); border-radius: 6px; font-size: 13px; font-weight: 600; }
+.apply-subscriptions { display: grid; gap: 14px; }
+.apply-sub-group { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; min-width: 0; }
+.apply-sub-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; background: #f5f8fc; border-bottom: 1px solid var(--border); font-size: 13px; }
+.apply-sub-heading label { display: flex; align-items: center; gap: 9px; cursor: pointer; }
+.apply-sub-heading span { color: var(--text-secondary); font-size: 12px; }
+.apply-sub-heading input, .apply-resource-item input, .apply-model-row input { width: 16px; height: 16px; flex: none; accent-color: var(--azure-blue); cursor: pointer; }
+.apply-resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 1px; background: var(--border); }
+.apply-resource-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px 16px; background: #fff; cursor: pointer; min-width: 0; }
+.apply-resource-item:hover, .apply-model-row:hover { background: #f7fbff; }
+.apply-resource-item span, .apply-model-identity { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.apply-resource-item strong, .apply-model-identity strong { font-size: 13px; }
+.apply-resource-item small, .apply-model-identity small, .apply-model-resource-heading small { font-size: 11px; color: var(--text-secondary); }
+.apply-empty { padding: 18px; border: 1px dashed var(--border); border-radius: 8px; color: var(--text-secondary); font-size: 13px; }
+.apply-help { font-size: 12px; color: var(--text-secondary); line-height: 1.5; margin: 0 0 12px; }
+.apply-no-policy { margin: 10px 16px; }
+.apply-model-sub + .apply-model-sub { margin-top: 16px; }
+.apply-model-resource + .apply-model-resource { border-top: 1px solid var(--border); }
+.apply-model-resource-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 12px 16px; background: #fafbfc; }
+.apply-model-resource-heading > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.apply-target-label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: 12px; }
+.apply-target-filter { min-width: 175px; max-width: min(45vw, 360px); }
+.apply-model-row { display: grid; grid-template-columns: 18px minmax(130px, 1fr) minmax(160px, auto); align-items: center; gap: 12px; padding: 11px 16px; border-top: 1px solid #f0f0f0; cursor: pointer; }
+.apply-current-filter { justify-self: end; color: var(--azure-blue-dark); font-size: 12px; overflow-wrap: anywhere; text-align: right; }
+.apply-current-filter.is-default { color: var(--text-secondary); }
+.apply-error, .apply-warning { padding: 10px 12px; border-radius: 5px; background: #fff4e6; color: #815600; font-size: 12px; overflow-wrap: anywhere; }
+.apply-error { margin: 10px 16px; background: #fde7e9; color: var(--danger); }
+.apply-preview { margin-bottom: 16px; font-size: 13px; }
+.apply-preview .empty-hint { padding: 0; }
+.apply-preview-scroll { overflow: auto; max-height: 320px; border: 1px solid var(--border); border-radius: 6px; margin-top: 12px; }
+.apply-preview-scroll th { position: sticky; top: 0; }
+.apply-preview-scroll td { overflow-wrap: anywhere; }
+
 /* Status badges */
 .status-no-resource { color: var(--danger); font-size: 12px; padding: 20px; text-align: center; }
 
@@ -290,10 +325,22 @@ body { font-family: 'Segoe UI', -apple-system, sans-serif; background: var(--bg)
 
 /* Responsive */
 @media (max-width: 768px) {
+    .top-bar { gap: 8px; padding: 0 8px; }
+    .brand span, .top-icon-btn { display: none; }
+    .top-bar-center { min-width: 0; }
+    .global-search { width: 100%; padding: 0 6px; }
+    .global-search input { min-width: 0; }
+    .top-bar-right { flex: none; }
     .sidebar { width: 48px; }
     .sidebar span, .nav-group-label { display: none; }
     .nav-item { justify-content: center; padding: 12px; }
-    .global-search { width: 200px; }
+    .main { min-width: 0; padding: 12px; }
+    .card-header { gap: 8px; flex-wrap: wrap; }
+    .card-body { padding: 14px; }
     .form-row { grid-template-columns: 1fr; }
     .stats-row { grid-template-columns: 1fr 1fr; }
+    .apply-resource-grid { grid-template-columns: 1fr; }
+    .apply-model-row { grid-template-columns: 18px 1fr; }
+    .apply-current-filter { grid-column: 2; justify-self: start; text-align: left; }
+    .apply-target-label { width: 100%; justify-content: space-between; }
 }

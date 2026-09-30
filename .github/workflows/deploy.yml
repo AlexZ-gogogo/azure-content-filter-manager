@@ -17,7 +17,10 @@ jobs:
           node-version: '22'
 
       - name: Install dependencies
-        run: npm install --production
+        run: npm ci --omit=dev
+
+      - name: Run regression tests
+        run: npm test
 
       - name: Azure Login
         uses: azure/login@v2

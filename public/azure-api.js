@@ -51,15 +51,13 @@ async function listCognitiveServicesAccounts(subscriptionId) {
 // List deployments for a Cognitive Services account
 async function listDeployments(subscriptionId, resourceGroup, accountName) {
     const url = `${ARM_BASE}/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CognitiveServices/accounts/${accountName}/deployments?api-version=${API_VERSION}`;
-    const result = await azureRequest(url);
-    return result.value || [];
+    return await azureRequestAll(url);
 }
 
 // List RAI policies for a Cognitive Services account
 async function listRaiPolicies(subscriptionId, resourceGroup, accountName) {
     const url = `${ARM_BASE}/subscriptions/${subscriptionId}/resourceGroups/${resourceGroup}/providers/Microsoft.CognitiveServices/accounts/${accountName}/raiPolicies?api-version=${API_VERSION}`;
-    const result = await azureRequest(url);
-    return result.value || [];
+    return await azureRequestAll(url);
 }
 
 // Create or update RAI policy

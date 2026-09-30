@@ -17,6 +17,11 @@ let resPageState = { page: 1, size: 50 };
 let filtersViewData = [];
 let filtersPageState = { page: 1, size: 10 };
 const REQUEST_CONCURRENCY = 8;
+let applyScope = new Set();
+let applyData = new Map();
+let applyLoadVersion = 0;
+let applyLoading = false;
+let applyExecuting = false;
 
 // Run async tasks with a bounded number of parallel requests
 async function mapWithConcurrency(items, limit, task) {
@@ -72,6 +77,7 @@ function setupEventListeners() {
     
     // Resources
     document.getElementById('btn-load-resources').addEventListener('click', loadResources);
+    document.getElementById('btn-res-to-apply').addEventListener('click', () => navigateTo('batch-apply'));
     document.getElementById('btn-sel-all-res').addEventListener('click', () => toggleAllRes(true));
     document.getElementById('btn-desel-all-res').addEventListener('click', () => toggleAllRes(false));
     document.getElementById('res-check-all').addEventListener('change', (e) => toggleAllRes(e.target.checked));
@@ -118,9 +124,13 @@ function setupEventListeners() {
     });
     
     // Batch Apply
-    document.getElementById('btn-apply-load-filters').addEventListener('click', loadApplyFilters);
+    document.getElementById('btn-apply-edit-resources').addEventListener('click', () => navigateTo('resources'));
     document.getElementById('btn-apply-load-models').addEventListener('click', loadApplyModels);
     document.getElementById('btn-apply-exec').addEventListener('click', executeBatchApply);
+    document.getElementById('apply-model-search').addEventListener('input', filterApplyModels);
+    document.getElementById('apply-only-default').addEventListener('change', filterApplyModels);
+    document.getElementById('btn-apply-select-visible').addEventListener('click', () => toggleVisibleApplyModels(true));
+    document.getElementById('btn-apply-clear-models').addEventListener('click', () => toggleVisibleApplyModels(false, true));
     
     // Batch Delete
     document.getElementById('btn-delete-load-filters').addEventListener('click', loadDeleteFilters);
@@ -178,6 +188,7 @@ function navigateTo(page) {
     if (pageEl) pageEl.classList.add('active');
     const navEl = document.querySelector(`[data-page="${page}"]`);
     if (navEl) navEl.classList.add('active');
+    if (page === 'batch-apply') renderApplyResources();
 }
 
 // ============ Subscriptions ============
@@ -224,6 +235,7 @@ function renderSubscriptions(subscriptions) {
             tr.querySelector('.sub-cb').addEventListener('change', (e) => {
                 if (e.target.checked) selectedSubscriptions.add(sub.subscriptionId);
                 else selectedSubscriptions.delete(sub.subscriptionId);
+                onSubscriptionScopeChanged();
                 updateSubSummary();
                 updateStats();
             });
@@ -281,6 +293,7 @@ function toggleAllSubs(checked) {
         else selectedSubscriptions.delete(cb.dataset.id);
     });
     document.getElementById('subs-check-all').checked = checked;
+    onSubscriptionScopeChanged();
     updateSubSummary();
     updateStats();
 }
@@ -303,29 +316,38 @@ async function loadResources() {
     }
     const loading = document.getElementById('res-loading');
     const tbody = document.getElementById('res-tbody');
+    const warning = document.getElementById('res-load-warning');
+    warning.classList.add('hidden');
     loading.classList.remove('hidden');
     tbody.innerHTML = '';
     allResources = [];
     
     try {
         const subIds = Array.from(selectedSubscriptions);
+        const failedSubscriptions = [];
         const perSubscription = await mapWithConcurrency(subIds, REQUEST_CONCURRENCY, async (subId) => {
             try {
                 const resources = await listCognitiveServicesAccounts(subId);
                 resources.forEach(r => { r._subId = subId; });
                 return resources;
             } catch (e) {
+                failedSubscriptions.push(subscriptionMap[subId] || subId);
                 return [];
             }
         });
         perSubscription.forEach(list => allResources.push(...list));
-        // Assign stable index used for selection identity; select all by default
+        // A bulk operation must never silently target every newly loaded resource.
         selectedResources.clear();
-        allResources.forEach((r, i) => { r._idx = i; selectedResources.add(i); });
+        allResources.forEach((r, i) => { r._idx = i; });
+        resetApplyScope();
         resSortState = { key: null, dir: 1 };
         resPageState.page = 1;
         loading.classList.add('hidden');
         applyResourceView();
+        if (failedSubscriptions.length) {
+            warning.textContent = `${failedSubscriptions.length} 个订阅的资源加载失败：${failedSubscriptions.join('、')}。这些订阅不会进入本次操作范围，请检查权限或稍后重试。`;
+            warning.classList.remove('hidden');
+        }
         updateSortIcons();
         updateStats();
     } catch (err) {
@@ -372,6 +394,7 @@ function applyResourceView() {
     const query = document.getElementById('res-search').value.toLowerCase();
     const typeFilter = document.getElementById('res-type-filter').value;
     resViewList = allResources.filter(r => {
+        if (!selectedSubscriptions.has(r._subId)) return false;
         const p = parseResourceId(r.id);
         const subName = subscriptionMap[r._subId] || r._subId || '';
         const haystack = `${r.name} ${r.kind || ''} ${p.resourceGroup} ${r.location} ${subName}`.toLowerCase();
@@ -411,7 +434,7 @@ function updateResSummary() {
     if (!el) return;
     const subCount = new Set(allResources.map(r => r._subId)).size;
     const filteredNote = resViewList.length !== allResources.length ? ` · 当前筛选 <strong>${resViewList.length}</strong> 个` : '';
-    el.innerHTML = `共 <strong>${allResources.length}</strong> 个资源 · 来自 <strong>${subCount}</strong> 个订阅${filteredNote} · 已选择 <strong>${selectedResources.size}</strong> 个`;
+    el.innerHTML = `已加载 <strong>${allResources.length}</strong> 个资源 · 来自 <strong>${subCount}</strong> 个订阅${filteredNote} · 已选择 <strong>${getSelectedResourceIndices().length}</strong> 个（仅已选订阅可操作）`;
     el.classList.toggle('hidden', allResources.length === 0);
 }
 
@@ -441,6 +464,7 @@ function renderResources(resources) {
         cb.addEventListener('change', (e) => {
             if (e.target.checked) selectedResources.add(i);
             else selectedResources.delete(i);
+            resetApplyScope();
             updateResSummary();
             updateStats();
         });
@@ -456,6 +480,7 @@ function toggleAllRes(checked) {
     });
     document.querySelectorAll('.res-cb').forEach(cb => { cb.checked = checked; });
     document.getElementById('res-check-all').checked = checked;
+    resetApplyScope();
     updateResSummary();
     updateStats();
 }
@@ -1140,168 +1165,241 @@ function escapeHtml(text) {
     return String(text).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-async function executeBatchApply() {
-    const checkedFilters = document.querySelectorAll('.apply-filter-cb:checked');
-    if (checkedFilters.length === 0) { alert('请先选择筛选器'); return; }
-    
-    const checkedModels = document.querySelectorAll('.apply-model-cb:checked');
-    if (checkedModels.length === 0) { alert('请先选择要应用的模型部署'); return; }
-    
-    // Build a map: resIndex -> filterName
-    const filterMap = {};
-    checkedFilters.forEach(cb => {
-        const idx = cb.dataset.resIndex;
-        filterMap[idx] = cb.value;
+function onSubscriptionScopeChanged() {
+    selectedResources = new Set(getSelectedResourceIndices());
+    if (allResources.length) applyResourceView();
+    resetApplyScope();
+}
+
+function resetApplyScope() {
+    applyScope = new Set(getSelectedResourceIndices());
+    invalidateApplyData();
+}
+
+function groupApplyResources(indices) {
+    const groups = new Map();
+    indices.forEach(idx => {
+        const subId = allResources[idx]._subId;
+        if (!groups.has(subId)) groups.set(subId, []);
+        groups.get(subId).push(idx);
     });
-    
-    // Only apply to models whose resource has a selected filter
-    const modelsToApply = [];
-    checkedModels.forEach(cb => {
-        const resIdx = cb.dataset.resIndex;
-        if (filterMap[resIdx]) {
-            modelsToApply.push({ resIdx: parseInt(resIdx), depName: cb.dataset.depName, depData: JSON.parse(cb.dataset.depData), filterName: filterMap[resIdx] });
+    return [...groups].sort(([a], [b]) => (subscriptionMap[a] || a).localeCompare(subscriptionMap[b] || b, 'zh-CN'));
+}
+
+function renderApplyResources() {
+    const candidates = getSelectedResourceIndices();
+    const groups = groupApplyResources(candidates);
+    const container = document.getElementById('apply-resources-list');
+    document.getElementById('apply-scope-summary').textContent = `${groups.length} 个订阅 · 资源浏览已选 ${candidates.length} 个 · 本次操作 ${applyScope.size} 个`;
+    if (!candidates.length) {
+        container.innerHTML = '<div class="apply-empty">尚无操作资源。请先选择订阅，在“资源浏览”中加载并勾选需要操作的资源。</div>';
+    } else {
+        container.innerHTML = groups.map(([subId, indices]) => `
+            <section class="apply-sub-group">
+                <div class="apply-sub-heading"><label><input type="checkbox" class="apply-sub-cb" data-sub-id="${escapeHtml(subId)}"> <strong>${escapeHtml(subscriptionMap[subId] || subId)}</strong></label><span>${indices.length} 个已选资源</span></div>
+                <div class="apply-resource-grid">${indices.sort((a, b) => allResources[a].name.localeCompare(allResources[b].name)).map(idx => {
+                    const r = allResources[idx], p = parseResourceId(r.id);
+                    return `<label class="apply-resource-item"><input type="checkbox" class="apply-resource-cb" data-index="${idx}" ${applyScope.has(idx) ? 'checked' : ''}><span><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(p.resourceGroup)} · ${escapeHtml(r.location || '-')} · ${escapeHtml(r.kind || '-')}</small></span></label>`;
+                }).join('')}</div>
+            </section>`).join('');
+        container.querySelectorAll('.apply-sub-cb').forEach(cb => {
+            const children = [...container.querySelectorAll('.apply-resource-cb')].filter(item => allResources[Number(item.dataset.index)]._subId === cb.dataset.subId);
+            cb.checked = children.every(item => item.checked);
+            cb.indeterminate = !cb.checked && children.some(item => item.checked);
+            cb.addEventListener('change', () => {
+                children.forEach(item => cb.checked ? applyScope.add(Number(item.dataset.index)) : applyScope.delete(Number(item.dataset.index)));
+                invalidateApplyData();
+            });
+        });
+        container.querySelectorAll('.apply-resource-cb').forEach(cb => cb.addEventListener('change', () => {
+            const idx = Number(cb.dataset.index);
+            cb.checked ? applyScope.add(idx) : applyScope.delete(idx);
+            invalidateApplyData();
+        }));
+    }
+    document.getElementById('btn-apply-load-models').disabled = !applyScope.size || applyLoading || applyExecuting;
+}
+
+function invalidateApplyData() {
+    applyLoadVersion++;
+    applyData.clear();
+    applyLoading = false;
+    document.getElementById('apply-models-loading').classList.add('hidden');
+    document.getElementById('apply-model-toolbar').classList.add('hidden');
+    document.getElementById('apply-models-list').innerHTML = '<p class="empty-hint">资源范围已改变，请重新加载模型部署。</p>';
+    document.getElementById('apply-progress-section').classList.add('hidden');
+    renderApplyResources();
+    updateApplySummary();
+}
+
+async function loadApplyModels() {
+    if (applyLoading || applyExecuting) return;
+    const indices = [...applyScope].filter(idx => getSelectedResourceIndices().includes(idx)).sort((a, b) => a - b);
+    if (!indices.length) { renderApplyResources(); return; }
+    const version = ++applyLoadVersion;
+    applyLoading = true;
+    applyData.clear();
+    document.getElementById('apply-models-loading').classList.remove('hidden');
+    document.getElementById('apply-models-list').innerHTML = '';
+    document.getElementById('apply-model-toolbar').classList.add('hidden');
+    document.getElementById('apply-progress-section').classList.add('hidden');
+    document.getElementById('btn-apply-load-models').disabled = true;
+    updateApplySummary();
+
+    try {
+        const results = await mapWithConcurrency(indices, REQUEST_CONCURRENCY, async idx => {
+            const p = parseResourceId(allResources[idx].id);
+            const [deployments, policies] = await Promise.allSettled([
+                listDeployments(p.subscriptionId, p.resourceGroup, p.accountName),
+                listRaiPolicies(p.subscriptionId, p.resourceGroup, p.accountName)
+            ]);
+            return {
+                idx,
+                deployments: deployments.status === 'fulfilled' ? deployments.value.sort((a, b) => a.name.localeCompare(b.name)) : [],
+                policies: policies.status === 'fulfilled' ? policies.value.filter(pol => pol.properties?.type !== 'SystemManaged').sort((a, b) => a.name.localeCompare(b.name)) : [],
+                deploymentError: deployments.status === 'rejected' ? String(deployments.reason?.message || deployments.reason) : '',
+                policyError: policies.status === 'rejected' ? String(policies.reason?.message || policies.reason) : ''
+            };
+        });
+        if (version !== applyLoadVersion) return; // Scope changed while requests were in flight.
+        applyData = new Map(results.map(item => [item.idx, item]));
+        document.getElementById('apply-model-toolbar').classList.remove('hidden');
+        document.getElementById('apply-model-search').value = '';
+        document.getElementById('apply-only-default').checked = false;
+        renderApplyModels();
+    } catch (err) {
+        if (version === applyLoadVersion) document.getElementById('apply-models-list').innerHTML = `<p class="apply-error">加载失败：${escapeHtml(err.message || String(err))}</p>`;
+    } finally {
+        if (version === applyLoadVersion) {
+            applyLoading = false;
+            document.getElementById('apply-models-loading').classList.add('hidden');
+            renderApplyResources();
+            updateApplySummary();
         }
+    }
+}
+
+function renderApplyModels() {
+    const container = document.getElementById('apply-models-list');
+    const groups = groupApplyResources([...applyScope].filter(idx => applyData.has(idx)));
+    container.innerHTML = groups.map(([subId, indices]) => `
+        <section class="apply-sub-group apply-model-sub">
+            <div class="apply-sub-heading"><strong>${escapeHtml(subscriptionMap[subId] || subId)}</strong><span>${indices.length} 个资源</span></div>
+            ${indices.map(idx => {
+                const r = allResources[idx], data = applyData.get(idx);
+                const options = data.policies.map(pol => `<option value="${escapeHtml(pol.name)}">${escapeHtml(pol.name)}</option>`).join('');
+                const rows = data.deployments.map((dep, depIndex) => {
+                    const current = dep.properties?.raiPolicyName;
+                    const model = dep.properties?.model || {};
+                    const system = !current || current.startsWith('Microsoft.');
+                    return `<label class="apply-model-row" data-search="${escapeHtml(`${r.name} ${dep.name} ${model.name || ''} ${model.version || ''} ${current || ''}`.toLowerCase())}" data-system="${system}">
+                        <input type="checkbox" class="apply-model-cb" data-res-index="${idx}" data-dep-index="${depIndex}">
+                        <span class="apply-model-identity"><strong>${escapeHtml(dep.name)}</strong><small>${escapeHtml(model.name || '未知模型')}${model.version ? ` · ${escapeHtml(model.version)}` : ''}</small></span>
+                        <span class="apply-current-filter ${system ? 'is-default' : ''}">当前：${escapeHtml(current || '未指定（默认）')}</span>
+                    </label>`;
+                }).join('');
+                return `<div class="apply-model-resource" data-res-index="${idx}">
+                    <div class="apply-model-resource-heading"><div><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(r.location || '-')} · ${data.deployments.length} 个部署</small></div>
+                        <label class="apply-target-label">目标筛选器 <select class="toolbar-select apply-target-filter" data-res-index="${idx}" ${data.policyError || !data.policies.length ? 'disabled' : ''}><option value="">请选择…</option>${options}</select></label>
+                    </div>
+                    ${data.deploymentError ? `<p class="apply-error">部署加载失败：${escapeHtml(data.deploymentError)}</p>` : ''}
+                    ${data.policyError ? `<p class="apply-error">筛选器加载失败：${escapeHtml(data.policyError)}</p>` : !data.policies.length ? '<p class="apply-help apply-no-policy">该资源没有自定义筛选器，需先创建后才能应用。</p>' : ''}
+                    ${rows || (!data.deploymentError ? '<p class="empty-hint">该资源没有模型部署</p>' : '')}
+                </div>`;
+            }).join('')}
+        </section>`).join('') || '<p class="empty-hint">没有可加载的资源。</p>';
+    container.querySelectorAll('.apply-model-cb, .apply-target-filter').forEach(el => el.addEventListener('change', updateApplySummary));
+    filterApplyModels();
+}
+
+function filterApplyModels() {
+    const query = document.getElementById('apply-model-search').value.trim().toLowerCase();
+    const onlyDefault = document.getElementById('apply-only-default').checked;
+    document.querySelectorAll('.apply-model-row').forEach(row => {
+        row.classList.toggle('hidden', !!query && !row.dataset.search.includes(query) || onlyDefault && row.dataset.system !== 'true');
     });
-    
-    if (modelsToApply.length === 0) { alert('请确保选择了筛选器对应资源下的模型部署'); return; }
-    
+    document.querySelectorAll('.apply-model-resource').forEach(group => {
+        const hasRows = group.querySelectorAll('.apply-model-row').length > 0;
+        group.classList.toggle('hidden', hasRows && !group.querySelector('.apply-model-row:not(.hidden)'));
+    });
+    document.querySelectorAll('.apply-model-sub').forEach(group => group.classList.toggle('hidden', !group.querySelector('.apply-model-resource:not(.hidden)')));
+}
+
+function toggleVisibleApplyModels(checked, all = false) {
+    document.querySelectorAll(all ? '.apply-model-cb' : '.apply-model-row:not(.hidden) .apply-model-cb').forEach(cb => { cb.checked = checked; });
+    updateApplySummary();
+}
+
+function getApplyChanges() {
+    const changes = [];
+    let missingTarget = 0, unchanged = 0;
+    document.querySelectorAll('.apply-model-cb:checked').forEach(cb => {
+        const idx = Number(cb.dataset.resIndex), data = applyData.get(idx);
+        if (!applyScope.has(idx) || !getSelectedResourceIndices().includes(idx) || !data) return;
+        const dep = data.deployments[Number(cb.dataset.depIndex)];
+        const target = document.querySelector(`.apply-target-filter[data-res-index="${idx}"]`)?.value;
+        if (!target || !data.policies.some(pol => pol.name === target)) { missingTarget++; return; }
+        if (dep.properties?.raiPolicyName === target) { unchanged++; return; }
+        changes.push({ idx, dep, target, cb });
+    });
+    return { changes, missingTarget, unchanged };
+}
+
+function updateApplySummary() {
+    const { changes, missingTarget, unchanged } = getApplyChanges();
+    const selected = document.querySelectorAll('.apply-model-cb:checked').length;
+    const summary = document.getElementById('apply-summary');
+    const btn = document.getElementById('btn-apply-exec');
+    if (!selected) {
+        summary.innerHTML = '<p class="empty-hint">请加载模型，勾选要修改的部署，并为其资源选择目标筛选器。</p>';
+    } else {
+        const details = changes.map(({ idx, dep, target }) => `<tr><td>${escapeHtml(subscriptionMap[allResources[idx]._subId] || allResources[idx]._subId)}</td><td>${escapeHtml(allResources[idx].name)} / ${escapeHtml(dep.name)}</td><td>${escapeHtml(dep.properties?.raiPolicyName || '未指定（默认）')}</td><td>${escapeHtml(target)}</td></tr>`).join('');
+        summary.innerHTML = `<strong>已勾选 ${selected} 个部署 · 待修改 ${changes.length} 个</strong>${missingTarget ? `<p class="apply-warning">${missingTarget} 个部署尚未选择目标筛选器，不会执行。</p>` : ''}${unchanged ? `<p class="apply-help">${unchanged} 个部署已应用目标筛选器，无需重复提交。</p>` : ''}${details ? `<div class="apply-preview-scroll"><table class="data-table"><thead><tr><th>订阅</th><th>资源 / 部署</th><th>当前筛选器</th><th>目标筛选器</th></tr></thead><tbody>${details}</tbody></table></div>` : ''}`;
+    }
+    btn.disabled = !changes.length || !!missingTarget || applyLoading || applyExecuting;
+}
+
+async function executeBatchApply() {
+    if (applyLoading || applyExecuting) return;
+    const { changes, missingTarget } = getApplyChanges();
+    if (missingTarget || !changes.length) { updateApplySummary(); return; }
+    const resourceCount = new Set(changes.map(item => item.idx)).size;
+    if (!window.confirm(`即将修改 ${resourceCount} 个资源中的 ${changes.length} 个模型部署的内容筛选器。确认执行吗？`)) return;
+    applyExecuting = true;
+    document.getElementById('btn-apply-exec').disabled = true;
+    document.getElementById('btn-apply-load-models').disabled = true;
+    document.querySelectorAll('.apply-resource-cb, .apply-sub-cb, .apply-model-cb, .apply-target-filter').forEach(el => { el.disabled = true; });
     const section = document.getElementById('apply-progress-section');
     section.classList.remove('hidden');
     const logEl = document.getElementById('apply-log');
     logEl.innerHTML = '';
+    updateProgress('apply-progress', 'apply-progress-text', 0, changes.length);
     let done = 0, errors = 0;
-    const total = modelsToApply.length;
-    
-    document.getElementById('btn-apply-exec').disabled = true;
-    log(logEl, `开始批量应用，共 ${total} 个部署`, 'i');
-    
-    for (const item of modelsToApply) {
-        const r = allResources[item.resIdx];
-        const p = parseResourceId(r.id);
+    for (const { idx, dep, target, cb } of changes) {
+        const r = allResources[idx], p = parseResourceId(r.id);
         try {
-            await updateDeploymentRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, item.depName, item.filterName, item.depData);
-            log(logEl, `[${r.name}/${item.depName}] ✓ 应用 "${item.filterName}" 成功`, 's');
+            await updateDeploymentRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, dep.name, target, dep);
+            dep.properties = { ...dep.properties, raiPolicyName: target };
+            cb.checked = false;
+            cb.closest('.apply-model-row').querySelector('.apply-current-filter').textContent = `当前：${target}`;
+            cb.closest('.apply-model-row').querySelector('.apply-current-filter').classList.remove('is-default');
+            cb.closest('.apply-model-row').dataset.system = String(target.startsWith('Microsoft.'));
+            log(logEl, `[${r.name}/${dep.name}] 已应用 ${target}`, 's');
             done++;
         } catch (e) {
             errors++;
-            log(logEl, `[${r.name}/${item.depName}] ✗ ${e.message}`, 'e');
+            log(logEl, `[${r.name}/${dep.name}] 失败：${e.message}`, 'e');
         }
-        updateProgress('apply-progress', 'apply-progress-text', done + errors, total);
+        updateProgress('apply-progress', 'apply-progress-text', done + errors, changes.length);
     }
-    log(logEl, `完成: 成功 ${done}, 失败 ${errors}`, done === total ? 's' : 'w');
-    addActivity(`批量应用筛选器 - ${done}/${total}`);
-    document.getElementById('btn-apply-exec').disabled = false;
-}
-
-// Load filters for batch-apply page
-async function loadApplyFilters() {
-    const indices = getSelectedResourceIndices();
-    if (indices.length === 0) { alert('请先在"资源浏览"中选择资源'); navigateTo('resources'); return; }
-    
-    const container = document.getElementById('apply-filters-list');
-    const loading = document.getElementById('apply-filters-loading');
-    loading.classList.remove('hidden');
-    container.innerHTML = '';
-    
-    try {
-        for (const idx of indices) {
-            const r = allResources[idx];
-            const p = parseResourceId(r.id);
-            const policies = await listRaiPolicies(p.subscriptionId, p.resourceGroup, p.accountName);
-            const customPolicies = policies.filter(pol => pol.properties?.type !== 'SystemManaged');
-            if (customPolicies.length > 0) {
-                let html = `<div class="filter-select-group"><div class="filter-select-group-header"><span class="res-name">${r.name}</span><span class="res-loc">${r.location} · ${customPolicies.length} 个筛选器</span></div>`;
-                customPolicies.forEach(pol => {
-                    html += `<label class="filter-select-item"><input type="checkbox" class="apply-filter-cb" value="${pol.name}" data-res-index="${idx}"><span class="fname">${pol.name}</span><span class="fbadge custom">自定义</span></label>`;
-                });
-                html += '</div>';
-                container.innerHTML += html;
-            }
-        }
-        loading.classList.add('hidden');
-        if (!container.innerHTML) container.innerHTML = '<p class="empty-hint"><i class="fas fa-info-circle"></i> 已选资源中没有自定义筛选器，请先在"批量创建"中创建</p>';
-        
-        container.querySelectorAll('.apply-filter-cb').forEach(cb => {
-            cb.addEventListener('change', updateApplySummary);
-        });
-    } catch (err) {
-        loading.classList.add('hidden');
-        container.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`;
-    }
-}
-
-// Load models for batch-apply page
-async function loadApplyModels() {
-    const indices = getSelectedResourceIndices();
-    if (indices.length === 0) { alert('请先在"资源浏览"中选择资源'); return; }
-    
-    const container = document.getElementById('apply-models-list');
-    const loading = document.getElementById('apply-models-loading');
-    loading.classList.remove('hidden');
-    container.innerHTML = '';
-    
-    try {
-        for (const idx of indices) {
-            const r = allResources[idx];
-            const p = parseResourceId(r.id);
-            const deployments = await listDeployments(p.subscriptionId, p.resourceGroup, p.accountName);
-            if (deployments.length > 0) {
-                let html = `<div class="filter-select-group"><div class="filter-select-group-header"><input type="checkbox" class="apply-res-all" data-res-index="${idx}" checked> <span class="res-name">${r.name}</span><span class="res-loc">${r.location} · ${deployments.length} 个部署</span></div>`;
-                deployments.forEach(dep => {
-                    const currentFilter = dep.properties?.raiPolicyName || 'Microsoft.Default';
-                    const modelName = dep.properties?.model?.name || '';
-                    const modelVer = dep.properties?.model?.version || '';
-                    html += `<label class="filter-select-item"><input type="checkbox" class="apply-model-cb" data-res-index="${idx}" data-dep-name="${dep.name}" data-dep-data='${JSON.stringify(dep).replace(/'/g, "&#39;")}' checked><span class="fname">${dep.name}<span class="model-current-filter">(${modelName} ${modelVer})</span></span><span class="fbadge system">当前: ${currentFilter}</span></label>`;
-                });
-                html += '</div>';
-                container.innerHTML += html;
-            }
-        }
-        loading.classList.add('hidden');
-        if (!container.innerHTML) container.innerHTML = '<p class="empty-hint">已选资源中没有模型部署</p>';
-        
-        // Select all toggle per resource
-        container.querySelectorAll('.apply-res-all').forEach(cb => {
-            cb.addEventListener('change', (e) => {
-                const idx = e.target.dataset.resIndex;
-                container.querySelectorAll(`.apply-model-cb[data-res-index="${idx}"]`).forEach(mcb => mcb.checked = e.target.checked);
-                updateApplySummary();
-            });
-        });
-        container.querySelectorAll('.apply-model-cb').forEach(cb => cb.addEventListener('change', updateApplySummary));
-        updateApplySummary();
-    } catch (err) {
-        loading.classList.add('hidden');
-        container.innerHTML = `<p style="color:var(--danger)">${err.message}</p>`;
-    }
-}
-
-function updateApplySummary() {
-    const checkedFilters = document.querySelectorAll('.apply-filter-cb:checked');
-    const checkedModels = document.querySelectorAll('.apply-model-cb:checked');
-    const summary = document.getElementById('apply-summary');
-    const btn = document.getElementById('btn-apply-exec');
-    
-    if (checkedFilters.length > 0 && checkedModels.length > 0) {
-        // Count how many models match selected filter resources
-        const filterResIndices = new Set();
-        checkedFilters.forEach(cb => filterResIndices.add(cb.dataset.resIndex));
-        let matchCount = 0;
-        checkedModels.forEach(cb => { if (filterResIndices.has(cb.dataset.resIndex)) matchCount++; });
-        
-        let details = '';
-        checkedFilters.forEach(cb => {
-            const r = allResources[parseInt(cb.dataset.resIndex)];
-            const modelCount = document.querySelectorAll(`.apply-model-cb[data-res-index="${cb.dataset.resIndex}"]:checked`).length;
-            if (modelCount > 0) details += `<div style="font-size:12px;color:var(--text-secondary)">${r.name}: "${cb.value}" → ${modelCount} 个部署</div>`;
-        });
-        
-        summary.innerHTML = `<div style="padding:8px 0"><strong>${checkedFilters.length}</strong> 个筛选器 → <strong>${matchCount}</strong> 个模型部署</div>${details}`;
-        btn.disabled = matchCount === 0;
-    } else {
-        summary.innerHTML = '<p class="empty-hint"><i class="fas fa-info-circle"></i> 请选择筛选器和模型部署</p>';
-        btn.disabled = true;
-    }
+    log(logEl, `完成：成功 ${done}，失败 ${errors}。失败项仍保持勾选，可核查后重试。`, errors ? 'w' : 's');
+    addActivity(`批量应用筛选器 - 成功 ${done}，失败 ${errors}，共 ${changes.length}`);
+    applyExecuting = false;
+    document.querySelectorAll('.apply-resource-cb, .apply-sub-cb, .apply-model-cb').forEach(el => { el.disabled = false; });
+    document.querySelectorAll('.apply-target-filter').forEach(el => { el.disabled = !applyData.get(Number(el.dataset.resIndex))?.policies.length; });
+    renderApplyResources();
+    filterApplyModels();
+    updateApplySummary();
 }
 
 // Load filters for batch-delete page
@@ -1379,7 +1477,9 @@ async function executeBatchDelete() {
 
 // ============ Helpers ============
 function getSelectedResourceIndices() {
-    return Array.from(selectedResources).sort((a, b) => a - b);
+    return Array.from(selectedResources)
+        .filter(idx => allResources[idx] && selectedSubscriptions.has(allResources[idx]._subId))
+        .sort((a, b) => a - b);
 }
 
 function gatherFilterConfig() {

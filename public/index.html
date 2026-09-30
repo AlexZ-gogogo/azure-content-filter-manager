@@ -135,10 +135,12 @@
                     <button class="btn btn-sm btn-primary" id="btn-load-resources"><i class="fas fa-download"></i> 加载资源</button>
                     <button class="btn btn-sm btn-outline" id="btn-sel-all-res"><i class="fas fa-check-double"></i> 全选</button>
                     <button class="btn btn-sm btn-outline" id="btn-desel-all-res"><i class="fas fa-minus-circle"></i> 取消</button>
+                    <button class="btn btn-sm btn-outline" id="btn-res-to-apply"><i class="fas fa-arrow-right"></i> 对已选资源批量应用</button>
                     <div class="toolbar-spacer"></div>
                     <div class="search-box"><i class="fas fa-search"></i><input type="text" id="res-search" placeholder="搜索资源..."></div>
                     <select class="toolbar-select" id="res-type-filter"><option value="">所有类型</option><option value="OpenAI">OpenAI</option><option value="AIServices">AI Services</option></select>
                 </div>
+                <div class="apply-warning hidden" id="res-load-warning" role="alert"></div>
                 <div class="card">
                     <div class="card-body no-pad">
                         <div class="loading hidden" id="res-loading"><div class="spinner"></div><span>加载资源中...</span></div>
@@ -324,33 +326,37 @@
 
             <!-- Page: Batch Apply -->
             <div class="page" id="page-batch-apply">
-                <div class="page-title"><h1>批量应用筛选器</h1><span class="page-subtitle">将现有筛选器应用到模型部署</span></div>
-                <!-- Step 1: Load & Select Filter -->
+                <div class="page-title"><h1>批量应用筛选器</h1><span class="page-subtitle">仅对已选订阅和资源生效。先确认资源，再选择模型及目标筛选器。</span></div>
+                <!-- Step 1: Resource scope -->
                 <div class="card">
-                    <div class="card-header"><h3><i class="fas fa-shield-alt"></i> 第 1 步：选择筛选器</h3>
-                        <button class="btn btn-sm btn-primary" id="btn-apply-load-filters"><i class="fas fa-sync-alt"></i> 加载已选资源的筛选器</button>
-                    </div>
+                    <div class="card-header"><h3><span class="apply-step-number">1</span> 确认操作资源</h3><button class="btn btn-sm btn-outline" id="btn-apply-edit-resources">返回资源浏览</button></div>
                     <div class="card-body">
-                        <div class="loading hidden" id="apply-filters-loading"><div class="spinner"></div><span>加载中...</span></div>
-                        <div id="apply-filters-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 请先在“资源浏览”中加载并勾选资源，然后点击上方按钮加载筛选器</p></div>
+                        <div id="apply-scope-summary" class="apply-scope-summary" aria-live="polite"></div>
+                        <div id="apply-resources-list" class="apply-subscriptions"></div>
                     </div>
                 </div>
-                <!-- Step 2: Select Models -->
+                <!-- Step 2: Deployments and target policies -->
                 <div class="card">
-                    <div class="card-header"><h3><i class="fas fa-robot"></i> 第 2 步：选择模型部署</h3>
-                        <button class="btn btn-sm btn-primary" id="btn-apply-load-models"><i class="fas fa-download"></i> 加载模型部署</button>
-                    </div>
+                    <div class="card-header"><h3><span class="apply-step-number">2</span> 选择部署与目标筛选器</h3><button class="btn btn-sm btn-primary" id="btn-apply-load-models"><i class="fas fa-download"></i> 加载所选资源的模型</button></div>
                     <div class="card-body">
+                        <p class="apply-help">同时读取各资源的自定义筛选器。模型默认不勾选，避免误改已有部署。</p>
                         <div class="loading hidden" id="apply-models-loading"><div class="spinner"></div><span>加载中...</span></div>
-                        <div id="apply-models-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 点击上方按钮加载已选资源的模型部署</p></div>
+                        <div id="apply-model-toolbar" class="toolbar hidden">
+                            <div class="search-box"><i class="fas fa-search"></i><input type="search" id="apply-model-search" placeholder="搜索部署、模型或资源"></div>
+                            <label class="checkbox-label"><input type="checkbox" id="apply-only-default"> 仅显示系统默认 / 未指定</label>
+                            <div class="toolbar-spacer"></div>
+                            <button class="btn btn-sm btn-outline" id="btn-apply-select-visible">勾选当前显示</button>
+                            <button class="btn btn-sm btn-outline" id="btn-apply-clear-models">清空部署选择</button>
+                        </div>
+                        <div id="apply-models-list"><p class="empty-hint"><i class="fas fa-info-circle"></i> 请先确认资源，然后加载模型部署</p></div>
                     </div>
                 </div>
-                <!-- Step 3: Execute -->
+                <!-- Step 3: Preview and execute -->
                 <div class="card">
-                    <div class="card-header"><h3><i class="fas fa-play"></i> 第 3 步：执行</h3></div>
+                    <div class="card-header"><h3><span class="apply-step-number">3</span> 预览并执行变更</h3></div>
                     <div class="card-body">
-                        <div id="apply-summary" class="empty-hint"><i class="fas fa-info-circle"></i> 请先选择筛选器和模型部署</div>
-                        <button class="btn btn-primary" id="btn-apply-exec" disabled><i class="fas fa-rocket"></i> 执行批量应用</button>
+                        <div id="apply-summary" class="apply-preview" aria-live="polite">请选择部署及其所属资源的目标筛选器</div>
+                        <button class="btn btn-primary" id="btn-apply-exec" disabled><i class="fas fa-rocket"></i> 确认并应用</button>
                         <div class="progress-section hidden" id="apply-progress-section">
                             <div class="progress-bar"><div class="progress-fill" id="apply-progress"></div></div>
                             <div class="progress-text" id="apply-progress-text">0%</div>
