@@ -1256,7 +1256,7 @@ async function loadApplyModels() {
             return {
                 idx,
                 deployments: deployments.status === 'fulfilled' ? deployments.value.sort((a, b) => a.name.localeCompare(b.name)) : [],
-                policies: policies.status === 'fulfilled' ? policies.value.filter(pol => pol.properties?.type !== 'SystemManaged').sort((a, b) => a.name.localeCompare(b.name)) : [],
+                policies: policies.status === 'fulfilled' ? policies.value.sort((a, b) => a.name.localeCompare(b.name)) : [],
                 deploymentError: deployments.status === 'rejected' ? String(deployments.reason?.message || deployments.reason) : '',
                 policyError: policies.status === 'rejected' ? String(policies.reason?.message || policies.reason) : ''
             };
@@ -1282,12 +1282,19 @@ async function loadApplyModels() {
 function renderApplyModels() {
     const container = document.getElementById('apply-models-list');
     const groups = groupApplyResources([...applyScope].filter(idx => applyData.has(idx)));
+    const templates = [...applyData.values()].flatMap(data => data.policies
+        .filter(pol => !isSystemPolicy(pol) && canCopyApplyPolicy(pol))
+        .map(pol => ({ sourceIdx: data.idx, policy: pol })));
     container.innerHTML = groups.map(([subId, indices]) => `
         <section class="apply-sub-group apply-model-sub">
             <div class="apply-sub-heading"><strong>${escapeHtml(subscriptionMap[subId] || subId)}</strong><span>${indices.length} 个资源</span></div>
             ${indices.map(idx => {
                 const r = allResources[idx], data = applyData.get(idx);
-                const options = data.policies.map(pol => `<option value="${escapeHtml(pol.name)}">${escapeHtml(pol.name)}</option>`).join('');
+                const localPolicies = data.policies.filter(pol => !isSystemPolicy(pol));
+                const localOptions = localPolicies.map(pol => `<option value="local:${escapeHtml(pol.name)}">${escapeHtml(pol.name)}</option>`).join('');
+                const systemOptions = data.policies.filter(isSystemPolicy).map(pol => `<option value="local:${escapeHtml(pol.name)}">${escapeHtml(pol.name)}（系统）</option>`).join('');
+                const copyOptions = templates.filter(item => item.sourceIdx !== idx && !data.policies.some(pol => pol.name === item.policy.name))
+                    .map(item => `<option value="copy:${item.sourceIdx}:${escapeHtml(item.policy.name)}">${escapeHtml(item.policy.name)}（复制自 ${escapeHtml(subscriptionMap[allResources[item.sourceIdx]._subId] || allResources[item.sourceIdx]._subId)} / ${escapeHtml(allResources[item.sourceIdx].name)}）</option>`).join('');
                 const rows = data.deployments.map((dep, depIndex) => {
                     const current = dep.properties?.raiPolicyName;
                     const model = dep.properties?.model || {};
@@ -1300,16 +1307,54 @@ function renderApplyModels() {
                 }).join('');
                 return `<div class="apply-model-resource" data-res-index="${idx}">
                     <div class="apply-model-resource-heading"><div><strong>${escapeHtml(r.name)}</strong><small>${escapeHtml(r.location || '-')} · ${data.deployments.length} 个部署</small></div>
-                        <label class="apply-target-label">目标筛选器 <select class="toolbar-select apply-target-filter" data-res-index="${idx}" ${data.policyError || !data.policies.length ? 'disabled' : ''}><option value="">请选择…</option>${options}</select></label>
+                        <label class="apply-target-label">目标筛选器 <select class="toolbar-select apply-target-filter" data-res-index="${idx}" ${data.policyError || !localOptions && !systemOptions && !copyOptions ? 'disabled' : ''}><option value="">请选择…</option>${localOptions ? `<optgroup label="本资源自定义筛选器">${localOptions}</optgroup>` : ''}${systemOptions ? `<optgroup label="本资源系统筛选器">${systemOptions}</optgroup>` : ''}${copyOptions ? `<optgroup label="从其他资源复制（执行时创建）">${copyOptions}</optgroup>` : ''}</select></label>
                     </div>
                     ${data.deploymentError ? `<p class="apply-error">部署加载失败：${escapeHtml(data.deploymentError)}</p>` : ''}
-                    ${data.policyError ? `<p class="apply-error">筛选器加载失败：${escapeHtml(data.policyError)}</p>` : !data.policies.length ? '<p class="apply-help apply-no-policy">该资源没有自定义筛选器，需先创建后才能应用。</p>' : ''}
+                    ${data.policyError ? `<p class="apply-error">筛选器加载失败：${escapeHtml(data.policyError)}</p>` : !localPolicies.length ? `<p class="apply-help apply-no-policy">该资源没有自定义筛选器。${copyOptions ? '可在“目标筛选器”中选其他资源的模板；执行时会先在本资源创建同名筛选器。' : '请先在其他已选资源创建筛选器，或使用“批量创建”。'}</p>` : ''}
                     ${rows || (!data.deploymentError ? '<p class="empty-hint">该资源没有模型部署</p>' : '')}
                 </div>`;
             }).join('')}
         </section>`).join('') || '<p class="empty-hint">没有可加载的资源。</p>';
     container.querySelectorAll('.apply-model-cb, .apply-target-filter').forEach(el => el.addEventListener('change', updateApplySummary));
     filterApplyModels();
+}
+
+// Only policies expressible by the current API can be safely copied. Blocklists
+// are account-scoped dependencies, so never silently clone a policy using them.
+function canCopyApplyPolicy(policy) {
+    const props = policy.properties || {};
+    return Array.isArray(props.contentFilters) && props.contentFilters.length > 0
+        && !props.customBlocklists?.length
+        && Object.keys(props).every(key => ['basePolicyName', 'mode', 'contentFilters', 'customBlocklists', 'type', 'provisioningState'].includes(key))
+        && props.contentFilters.every(filter => Object.keys(filter).every(key => ['name', 'source', 'enabled', 'blocking', 'severityThreshold'].includes(key)));
+}
+
+function resolveApplyTarget(idx, value) {
+    const data = applyData.get(idx);
+    if (!data || data.policyError || !value) return null;
+    if (value.startsWith('local:')) {
+        const name = value.slice(6);
+        return data.policies.some(pol => pol.name === name) ? { name, copied: false } : null;
+    }
+    const match = /^copy:(\d+):(.+)$/.exec(value);
+    if (!match) return null;
+    const sourceIdx = Number(match[1]), name = match[2];
+    if (sourceIdx === idx || data.policies.some(pol => pol.name === name) || !applyScope.has(sourceIdx)) return null;
+    const source = applyData.get(sourceIdx);
+    const policy = source?.policies.find(pol => pol.name === name && !isSystemPolicy(pol) && canCopyApplyPolicy(pol));
+    return policy ? { name, copied: true, sourceIdx, policy } : null;
+}
+
+function copyApplyPolicyBody(policy) {
+    if (!canCopyApplyPolicy(policy)) throw new Error('源筛选器含不支持复制的配置');
+    const { basePolicyName, mode, contentFilters } = policy.properties;
+    return { properties: {
+        basePolicyName: basePolicyName || 'Microsoft.Default',
+        ...(mode ? { mode } : {}),
+        contentFilters: contentFilters.map(({ name, source, enabled, blocking, severityThreshold }) => ({
+            name, source, enabled, blocking, ...(severityThreshold ? { severityThreshold } : {})
+        }))
+    } };
 }
 
 function filterApplyModels() {
@@ -1337,9 +1382,9 @@ function getApplyChanges() {
         const idx = Number(cb.dataset.resIndex), data = applyData.get(idx);
         if (!applyScope.has(idx) || !getSelectedResourceIndices().includes(idx) || !data) return;
         const dep = data.deployments[Number(cb.dataset.depIndex)];
-        const target = document.querySelector(`.apply-target-filter[data-res-index="${idx}"]`)?.value;
-        if (!target || !data.policies.some(pol => pol.name === target)) { missingTarget++; return; }
-        if (dep.properties?.raiPolicyName === target) { unchanged++; return; }
+        const target = resolveApplyTarget(idx, document.querySelector(`.apply-target-filter[data-res-index="${idx}"]`)?.value);
+        if (!target) { missingTarget++; return; }
+        if (!target.copied && dep.properties?.raiPolicyName === target.name) { unchanged++; return; }
         changes.push({ idx, dep, target, cb });
     });
     return { changes, missingTarget, unchanged };
@@ -1353,8 +1398,9 @@ function updateApplySummary() {
     if (!selected) {
         summary.innerHTML = '<p class="empty-hint">请加载模型，勾选要修改的部署，并为其资源选择目标筛选器。</p>';
     } else {
-        const details = changes.map(({ idx, dep, target }) => `<tr><td>${escapeHtml(subscriptionMap[allResources[idx]._subId] || allResources[idx]._subId)}</td><td>${escapeHtml(allResources[idx].name)} / ${escapeHtml(dep.name)}</td><td>${escapeHtml(dep.properties?.raiPolicyName || '未指定（默认）')}</td><td>${escapeHtml(target)}</td></tr>`).join('');
-        summary.innerHTML = `<strong>已勾选 ${selected} 个部署 · 待修改 ${changes.length} 个</strong>${missingTarget ? `<p class="apply-warning">${missingTarget} 个部署尚未选择目标筛选器，不会执行。</p>` : ''}${unchanged ? `<p class="apply-help">${unchanged} 个部署已应用目标筛选器，无需重复提交。</p>` : ''}${details ? `<div class="apply-preview-scroll"><table class="data-table"><thead><tr><th>订阅</th><th>资源 / 部署</th><th>当前筛选器</th><th>目标筛选器</th></tr></thead><tbody>${details}</tbody></table></div>` : ''}`;
+        const copyCount = new Set(changes.filter(item => item.target.copied).map(item => item.idx)).size;
+        const details = changes.map(({ idx, dep, target }) => `<tr><td>${escapeHtml(subscriptionMap[allResources[idx]._subId] || allResources[idx]._subId)}</td><td>${escapeHtml(allResources[idx].name)} / ${escapeHtml(dep.name)}</td><td>${escapeHtml(dep.properties?.raiPolicyName || '未指定（默认）')}</td><td>${escapeHtml(target.name)}${target.copied ? `（先复制自 ${escapeHtml(allResources[target.sourceIdx].name)}）` : ''}</td></tr>`).join('');
+        summary.innerHTML = `<strong>已勾选 ${selected} 个部署 · 待修改 ${changes.length} 个</strong>${copyCount ? `<p class="apply-warning">将先在 ${copyCount} 个目标资源创建同名筛选器，再修改模型部署。不会覆盖现有同名筛选器。</p>` : ''}${missingTarget ? `<p class="apply-warning">${missingTarget} 个部署尚未选择目标筛选器，不会执行。</p>` : ''}${unchanged ? `<p class="apply-help">${unchanged} 个部署已应用目标筛选器，无需重复提交。</p>` : ''}${details ? `<div class="apply-preview-scroll"><table class="data-table"><thead><tr><th>订阅</th><th>资源 / 部署</th><th>当前筛选器</th><th>目标筛选器</th></tr></thead><tbody>${details}</tbody></table></div>` : ''}`;
     }
     btn.disabled = !changes.length || !!missingTarget || applyLoading || applyExecuting;
 }
@@ -1364,7 +1410,8 @@ async function executeBatchApply() {
     const { changes, missingTarget } = getApplyChanges();
     if (missingTarget || !changes.length) { updateApplySummary(); return; }
     const resourceCount = new Set(changes.map(item => item.idx)).size;
-    if (!window.confirm(`即将修改 ${resourceCount} 个资源中的 ${changes.length} 个模型部署的内容筛选器。确认执行吗？`)) return;
+    const copyCount = new Set(changes.filter(item => item.target.copied).map(item => item.idx)).size;
+    if (!window.confirm(`即将${copyCount ? `先在 ${copyCount} 个资源创建同名筛选器，然后` : ''}修改 ${resourceCount} 个资源中的 ${changes.length} 个模型部署。确认执行吗？`)) return;
     applyExecuting = true;
     document.getElementById('btn-apply-exec').disabled = true;
     document.getElementById('btn-apply-load-models').disabled = true;
@@ -1375,16 +1422,40 @@ async function executeBatchApply() {
     logEl.innerHTML = '';
     updateProgress('apply-progress', 'apply-progress-text', 0, changes.length);
     let done = 0, errors = 0;
+    const prepared = new Map();
     for (const { idx, dep, target, cb } of changes) {
         const r = allResources[idx], p = parseResourceId(r.id);
         try {
-            await updateDeploymentRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, dep.name, target, dep);
-            dep.properties = { ...dep.properties, raiPolicyName: target };
+            if (target.copied && !prepared.has(idx)) {
+                try {
+                    const latest = await listRaiPolicies(p.subscriptionId, p.resourceGroup, p.accountName);
+                    if (latest.some(pol => pol.name === target.name)) throw new Error('目标资源已存在同名筛选器，请重新加载并选择本资源策略');
+                    const sourceResource = allResources[target.sourceIdx];
+                    const sourceId = parseResourceId(sourceResource.id);
+                    const latestSource = await listRaiPolicies(sourceId.subscriptionId, sourceId.resourceGroup, sourceId.accountName);
+                    const sourcePolicy = latestSource.find(pol => pol.name === target.name && !isSystemPolicy(pol) && canCopyApplyPolicy(pol));
+                    if (!sourcePolicy) throw new Error('源筛选器已改变或不支持跨资源复制，请重新加载');
+                    await createOrUpdateRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, target.name, copyApplyPolicyBody(sourcePolicy));
+                    const data = applyData.get(idx);
+                    data.policies.push({ ...sourcePolicy, name: target.name });
+                    const select = document.querySelector(`.apply-target-filter[data-res-index="${idx}"]`);
+                    select.add(new Option(`${target.name}（本资源）`, `local:${target.name}`));
+                    select.value = `local:${target.name}`;
+                    log(logEl, `[${r.name}] 已创建筛选器 ${target.name}`, 's');
+                    prepared.set(idx, null);
+                } catch (err) {
+                    prepared.set(idx, err);
+                    throw err;
+                }
+            }
+            if (prepared.get(idx)) throw prepared.get(idx);
+            await updateDeploymentRaiPolicy(p.subscriptionId, p.resourceGroup, p.accountName, dep.name, target.name, dep);
+            dep.properties = { ...dep.properties, raiPolicyName: target.name };
             cb.checked = false;
-            cb.closest('.apply-model-row').querySelector('.apply-current-filter').textContent = `当前：${target}`;
+            cb.closest('.apply-model-row').querySelector('.apply-current-filter').textContent = `当前：${target.name}`;
             cb.closest('.apply-model-row').querySelector('.apply-current-filter').classList.remove('is-default');
-            cb.closest('.apply-model-row').dataset.system = String(target.startsWith('Microsoft.'));
-            log(logEl, `[${r.name}/${dep.name}] 已应用 ${target}`, 's');
+            cb.closest('.apply-model-row').dataset.system = String(target.name.startsWith('Microsoft.'));
+            log(logEl, `[${r.name}/${dep.name}] 已应用 ${target.name}`, 's');
             done++;
         } catch (e) {
             errors++;
@@ -1396,7 +1467,7 @@ async function executeBatchApply() {
     addActivity(`批量应用筛选器 - 成功 ${done}，失败 ${errors}，共 ${changes.length}`);
     applyExecuting = false;
     document.querySelectorAll('.apply-resource-cb, .apply-sub-cb, .apply-model-cb').forEach(el => { el.disabled = false; });
-    document.querySelectorAll('.apply-target-filter').forEach(el => { el.disabled = !applyData.get(Number(el.dataset.resIndex))?.policies.length; });
+    document.querySelectorAll('.apply-target-filter').forEach(el => { el.disabled = !!applyData.get(Number(el.dataset.resIndex))?.policyError || el.options.length <= 1; });
     renderApplyResources();
     filterApplyModels();
     updateApplySummary();
